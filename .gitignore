@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+.python-version
+
+# Function local/runtime artifacts
+local.settings.json
+.azure-functions/
+.copilot/
+
+# Azurite/artifacts
+.azurite/
+artifacts/
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+*.local
+.streamlit/secrets.toml
+
+# Logs and temp
+*.log
+*.tmp
+*.temp
+
+# OS/editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.user

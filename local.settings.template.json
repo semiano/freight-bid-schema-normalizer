@@ -1,0 +1,16 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "languageWorkers:python:defaultExecutablePath": ".venv\\Scripts\\python.exe",
+    "INPUT_CONTAINER": "input",
+    "OUTPUT_CONTAINER": "output",
+    "FUNCTION_PERSIST_ARTIFACTS": "true",
+    "FUNCTION_LOCAL_ARTIFACT_ROOT": "artifacts/function_runs",
+    "PLANNER_MODE": "mock",
+    "FOUNDRY_PROJECT_ENDPOINT": "",
+    "FOUNDRY_AGENT_NAME": "",
+    "FOUNDRY_API_KEY": ""
+  }
+}
