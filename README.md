@@ -101,7 +101,9 @@ This repository implements an AI-driven Excel schema standardization platform fo
 
 - Main Function App entrypoint: [function_app.py](function_app.py)
 - Function name: `ProcessWorkbookBlob`
-- Trigger: blob trigger on `%INPUT_CONTAINER%/{name}`
+- Trigger: `eventGridTrigger` on Storage BlobCreated events (for `%INPUT_CONTAINER%`)
+- Runtime behavior: reads uploaded blob from `%INPUT_CONTAINER%` and writes `%OUTPUT_CONTAINER%/{name}.canonical.csv|validation.json|planner.json`
+- Flex Consumption note: Event Grid subscription must exist from storage account to `ProcessWorkbookBlob`
 - Run mode via env var `RUN_MODE`:
   - `draft`
   - `execute_with_validation` (default)
@@ -189,6 +191,16 @@ New Foundry runtime configuration is parameterized in Bicep via:
 - `foundryAgentName`
 - `foundryAgentVersion`
 - `foundryAssistantId` (kept empty for strict `agent_reference` mode)
+
+Foundry agent lifecycle boundary:
+- Bicep does **not** create or version Foundry agents; it only injects runtime config (`FOUNDRY_*` env vars).
+- Agent creation/versioning is handled by scripts:
+  - `scripts/deploy-foundry-agent.py`
+  - `scripts/deploy-postprocess-agent.py`
+
+System prompt text is versioned in-repo:
+- `src/function_app/prompts/transform_planner_system.txt`
+- `src/function_app/prompts/notes_postprocess_system.txt`
 
 ## Implemented Slices
 

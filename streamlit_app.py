@@ -9,6 +9,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 
 from src.function_app.services.foundry_agent_client import FoundryAgentClient
@@ -203,6 +204,20 @@ def _fetch_foundry_agents_snapshot(
     client.assistant_id = assistant_id or ""
 
     all_remote: list[dict[str, Any]] = []
+
+    def _upsert_remote(record: dict[str, Any]) -> None:
+        remote_name = (record.get("agent_name") or "").strip()
+        if not remote_name:
+            return
+        for existing in all_remote:
+            if existing.get("agent_name") != remote_name:
+                continue
+            for key in ["assistant_id", "system_prompt", "model", "created_at"]:
+                if not existing.get(key) and record.get(key):
+                    existing[key] = record[key]
+            return
+        all_remote.append(record)
+
     fetch_error: str | None = None
     try:
         payload = client._get_json(f"{endpoint.rstrip('/')}/assistants?api-version={api_version}")
@@ -211,7 +226,7 @@ def _fetch_foundry_agents_snapshot(
             if not isinstance(item, dict):
                 continue
             remote_name = item.get("name") or item.get("id") or "Unknown"
-            all_remote.append({
+            _upsert_remote({
                 "assistant_id": item.get("id") or "",
                 "agent_name": remote_name,
                 "endpoint": endpoint,
@@ -221,6 +236,60 @@ def _fetch_foundry_agents_snapshot(
             })
     except Exception as error:
         fetch_error = str(error)
+
+    agents_sdk_error: str | None = None
+    try:
+        from azure.ai.projects import AIProjectClient
+
+        credential = DefaultAzureCredential(exclude_interactive_browser_credential=False)
+        project_client = AIProjectClient(endpoint=endpoint, credential=credential)
+        for item in project_client.agents.list():
+            remote_name = (getattr(item, "name", "") or getattr(item, "id", "") or "Unknown").strip()
+            if not remote_name:
+                continue
+            _upsert_remote({
+                "assistant_id": (getattr(item, "id", "") or "").strip(),
+                "agent_name": remote_name,
+                "endpoint": endpoint,
+                "system_prompt": getattr(item, "instructions", "") or "",
+                "model": getattr(item, "model", "") or "",
+                "created_at": str(getattr(item, "created_at", "") or ""),
+            })
+    except Exception as error:
+        agents_sdk_error = str(error)
+
+    agents_rest_error: str | None = None
+    try:
+        payload = client._get_json(f"{endpoint.rstrip('/')}/agents?api-version={api_version}")
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            remote_name = (item.get("name") or item.get("id") or "Unknown").strip()
+            versions = item.get("versions") or {}
+            latest = versions.get("latest") if isinstance(versions, dict) else {}
+            latest = latest if isinstance(latest, dict) else {}
+            definition = latest.get("definition") or {}
+            definition = definition if isinstance(definition, dict) else {}
+
+            _upsert_remote({
+                "assistant_id": (latest.get("id") or item.get("id") or "").strip(),
+                "agent_name": remote_name,
+                "endpoint": endpoint,
+                "system_prompt": definition.get("instructions") or item.get("instructions") or "",
+                "model": definition.get("model") or item.get("model") or "",
+                "created_at": latest.get("created_at") or item.get("created_at") or "",
+            })
+    except Exception as error:
+        agents_rest_error = str(error)
+
+    if fetch_error and agents_sdk_error and agents_rest_error:
+        fetch_error = (
+            f"assistants: {fetch_error}; "
+            f"agents_sdk: {agents_sdk_error}; agents_rest: {agents_rest_error}"
+        )
+    elif not fetch_error and agents_sdk_error and agents_rest_error and not all_remote:
+        fetch_error = f"agents_sdk: {agents_sdk_error}; agents_rest: {agents_rest_error}"
 
     # Build enriched agent cards — one per expected agent
     agents: list[dict[str, Any]] = []
@@ -322,6 +391,11 @@ def _discover_pipeline_dirs() -> list[Path]:
     discovered: list[Path] = []
     seen: set[Path] = set()
 
+    for pipeline_dir in _sync_blob_output_runs_to_local_cache():
+        if pipeline_dir not in seen:
+            discovered.append(pipeline_dir)
+            seen.add(pipeline_dir)
+
     for root in DISCOVERY_ROOTS:
         if not root.exists() or not root.is_dir():
             continue
@@ -341,6 +415,111 @@ def _discover_pipeline_dirs() -> list[Path]:
                     seen.add(pipeline_dir)
 
     discovered.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return discovered
+
+
+def _safe_blob_run_name(blob_stem: str) -> str:
+    safe = blob_stem.replace("/", "_").replace("\\", "_").replace(":", "_")
+    return safe or "blob-run"
+
+
+def _sync_blob_output_runs_to_local_cache() -> list[Path]:
+    """Mirror recent blob outputs into local pipeline folders for Prior Runs browsing.
+
+    Hosted Streamlit instances usually do not have the function's local artifacts folder,
+    so this builds compatible local run folders from blobs in OUTPUT_CONTAINER.
+    """
+    output_container = os.getenv("OUTPUT_CONTAINER", "output").strip()
+    connection_string = os.getenv("AzureWebJobsStorage", "")
+    if not output_container:
+        return []
+
+    try:
+        blob_service = _create_blob_service_client(connection_string)
+        container_client = blob_service.get_container_client(output_container)
+        blob_items = list(container_client.list_blobs())
+    except Exception:
+        return []
+
+    suffix_to_file = {
+        ".validation.json": "validation_report.json",
+        ".planner.json": "planner_response.json",
+        ".canonical.csv": "canonical_output.csv",
+    }
+
+    grouped: dict[str, dict[str, Any]] = {}
+    for blob in blob_items:
+        blob_name = getattr(blob, "name", "")
+        if not isinstance(blob_name, str) or not blob_name:
+            continue
+
+        matched_suffix = ""
+        target_file = ""
+        for suffix, mapped_file in suffix_to_file.items():
+            if blob_name.endswith(suffix):
+                matched_suffix = suffix
+                target_file = mapped_file
+                break
+        if not matched_suffix:
+            continue
+
+        stem = blob_name[: -len(matched_suffix)]
+        group = grouped.setdefault(stem, {"files": {}, "last_modified": None})
+        group["files"][target_file] = blob_name
+
+        last_modified = getattr(blob, "last_modified", None)
+        if group["last_modified"] is None or (
+            last_modified is not None and last_modified > group["last_modified"]
+        ):
+            group["last_modified"] = last_modified
+
+    if not grouped:
+        return []
+
+    run_limit = int(os.getenv("STREAMLIT_BLOB_RUN_LIMIT", "40") or "40")
+    sorted_runs = sorted(
+        grouped.items(),
+        key=lambda item: item[1].get("last_modified") or datetime.min,
+        reverse=True,
+    )[: max(1, run_limit)]
+
+    cache_root = WORKSPACE_ROOT / "artifacts" / "function_runs"
+    discovered: list[Path] = []
+
+    for stem, metadata in sorted_runs:
+        files = metadata.get("files", {}) if isinstance(metadata, dict) else {}
+        if not isinstance(files, dict) or "validation_report.json" not in files:
+            continue
+
+        run_folder = cache_root / f"{_safe_blob_run_name(stem)}-blob" / "pipeline_blob"
+        run_folder.mkdir(parents=True, exist_ok=True)
+        discovered.append(run_folder)
+
+        for local_name, blob_name in files.items():
+            local_path = run_folder / local_name
+            try:
+                payload = container_client.download_blob(blob_name).readall()
+                local_path.write_bytes(payload)
+            except Exception:
+                continue
+
+        # Keep a minimal execution_result for summary cards.
+        execution_result_path = run_folder / "execution_result.json"
+        if not execution_result_path.exists():
+            validation_payload = _read_json(run_folder / "validation_report.json") or {}
+            validation_status = str(validation_payload.get("status", "Unknown"))
+            execution_result_path.write_text(
+                json.dumps(
+                    {
+                        "status": "Success" if validation_status.lower() in {"pass", "passed"} else "Unknown",
+                        "source": "blob_output_container",
+                        "blob_stem": stem,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
     return discovered
 
 

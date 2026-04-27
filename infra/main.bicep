@@ -59,10 +59,10 @@ param plannerMode string = 'live'
 @description('Foundry project endpoint used by runtime.')
 param foundryProjectEndpoint string = ''
 
-@description('Foundry agent name for New Foundry invocation.')
+@description('Foundry agent name used by runtime invocation only. Bicep does not create/manage Foundry agents.')
 param foundryAgentName string = 'RXO-Document-Normalizer'
 
-@description('Foundry agent version for New Foundry invocation.')
+@description('Foundry agent version used by runtime invocation only. Bicep does not create/manage Foundry agents.')
 param foundryAgentVersion string = '5'
 
 @description('Foundry API version used by runtime.')
@@ -74,10 +74,10 @@ param foundryModel string = 'gpt-4.1'
 @description('Canonical schema template name.')
 param canonicalSchemaName string = 'freight_bid_v1'
 
-@description('Foundry post-process agent name.')
+@description('Foundry post-process agent name used by runtime only. Bicep does not create/manage Foundry agents.')
 param foundryPostProcessAgentName string = 'RXO-Notes-PostProcessor'
 
-@description('Foundry post-process agent version.')
+@description('Foundry post-process agent version used by runtime only. Bicep does not create/manage Foundry agents.')
 param foundryPostProcessAgentVersion string = '1'
 
 @description('Post-process mode (mock | live).')
@@ -87,7 +87,7 @@ param foundryPostProcessAgentVersion string = '1'
 ])
 param postprocessMode string = 'mock'
 
-@description('Optional preconfigured Foundry assistant ID (left empty for strict New Foundry agent_reference mode).')
+@description('Optional preconfigured Foundry assistant ID for runtime fallback. Bicep does not create/manage assistants.')
 param foundryAssistantId string = ''
 
 @description('Deploy a Web App to host the Streamlit companion UI.')
@@ -327,7 +327,7 @@ module roles './modules/roles.bicep' = {
     streamlitAppPrincipalId: streamlitApp.?outputs.?streamlitPrincipalId ?? ''
     storageAccountName: storage.outputs.storageAccountName
     keyVaultName: keyVault.outputs.keyVaultName
-    grantQueueRole: createQueues
+    grantQueueRole: true
     assignFoundryRoles: assignFoundryRoles
     assignWorkerRoles: assignContainerWorkerRoles
     assignWorkerFoundryRoles: assignContainerWorkerFoundryRoles

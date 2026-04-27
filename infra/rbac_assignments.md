@@ -23,10 +23,15 @@
 | Scope | Role | Role Definition ID | Assigned by IaC? |
 |---|---|---|---|
 | Storage Account | **Storage Blob Data Owner** | `b7e6dc6d-f1e8-4753-8033-0f276bb0955b` | Yes (FC1 requires Owner) |
-| Storage Account | Storage Queue Data Contributor *(if queues enabled)* | `974c5e8b-45b9-4653-ba55-5f855dd0fb88` | Yes (conditional) |
+| Storage Account | **Storage Queue Data Contributor** | `974c5e8b-45b9-4653-ba55-5f855dd0fb88` | Yes (always) |
+| Storage Account | **EventGrid EventSubscription Contributor** | `428e0ff0-5e57-4d9c-a221-2c70d0e0a443` | Yes (always) |
 | Key Vault | **Key Vault Secrets User** | `4633458b-17de-408a-b874-0445c86b69e6` | Yes |
 | Foundry Account | **Cognitive Services OpenAI User** | `5e0bd9bd-7b93-4f28-af87-19fc36ad61bd` | Yes (conditional) |
 | Foundry Project | **Azure AI User** | `53ca6127-db72-4b80-b1b0-d745d6d5456d` | Yes (conditional) |
+
+> **Important:** Blob-trigger Functions use Azure Storage queues internally for trigger
+> bookkeeping/poison handling. If `Storage Queue Data Contributor` is missing, input blobs can
+> accumulate in `input/` while the Function App shows no successful invocations.
 
 ### 2b. Streamlit Container App (`rxodocnorm-streamlit-{env}-app`)
 

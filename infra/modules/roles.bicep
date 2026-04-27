@@ -50,6 +50,7 @@ param foundryProjectName string = ''
 var storageBlobDataOwnerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
 var storageBlobDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 var storageQueueDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
+var eventGridEventSubscriptionContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '428e0ff0-5e57-4d9c-a221-2c70d0e0a443')
 var keyVaultSecretsUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 var openAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
 var azureAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')
@@ -93,6 +94,16 @@ resource storageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   scope: storageAccount
   properties: {
     roleDefinitionId: storageQueueDataContributorRoleId
+    principalId: principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageEventGridRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, principalId, eventGridEventSubscriptionContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: eventGridEventSubscriptionContributorRoleId
     principalId: principalId
     principalType: 'ServicePrincipal'
   }

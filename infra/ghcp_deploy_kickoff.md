@@ -18,6 +18,7 @@ step below IN ORDER and report results at each gate before proceeding.
 
 IMPORTANT ARCHITECTURE NOTES:
 - Function App runs on FlexConsumption (FC1) — NOT Dynamic/Y1 (subscription has zero VM quota)
+- FC1 requires BlobTrigger source = EventGrid (LogsAndContainerScan is unsupported and host will load 0 functions)
 - Streamlit UI runs on Azure Container Apps — NOT Web App (zero VM quota for any App Service SKU)
 - ACR (rxodocnormacr.azurecr.io) hosts the Streamlit Docker image
 - All storage access uses managed identity (no connection strings in production)
@@ -88,8 +89,8 @@ PHASE 2 — DEPLOY INFRASTRUCTURE  (target: dev by default)
        ✓ FlexConsumption (FC1) App Service plan
        ✓ Function App (Linux Python 3.12, system MI, FC1 config)
        ✓ Container Apps managed environment + Streamlit Container App
-       ✓ 4+ RBAC role assignments (blob data owner, KV secrets user,
-           blob data contributor for Streamlit, etc.)
+           ✓ 6+ RBAC role assignments (blob data owner + queue data contributor + Event Grid subscription contributor for Function,
+           KV secrets user, blob data contributor for Streamlit, etc.)
        ✗ Web App = disabled (enableWebApp=false, VM quota is zero)
          ✗ Container Worker = disabled (no additional worker resources)
        ✗ Foundry project = not created (createFoundryProject=false)
@@ -139,6 +140,8 @@ Refer to infra/rbac_assignments.md for the complete role matrix.
 
      Function App:
        [ ] Storage Blob Data Owner on storage account
+       [ ] Storage Queue Data Contributor on storage account
+       [ ] EventGrid EventSubscription Contributor on storage account
        [ ] Key Vault Secrets User on Key Vault
        [ ] (if assignFoundryRoles=true) Cognitive Services OpenAI User on Foundry account
        [ ] (if assignFoundryRoles=true) Azure AI User on Foundry project
@@ -159,6 +162,18 @@ PHASE 4 — APPLICATION DEPLOYMENT
 
 4.1  Deploy Function App code:
        func azure functionapp publish func-rxodocnorm-$ENV --python
+
+4.1a Ensure storage Event Grid subscription exists for input container:
+      STORAGE_ID=$(az storage account show -n <storage-account-name> -g $RG --query id -o tsv)
+      FUNC_ID=$(az functionapp function show -n func-rxodocnorm-$ENV -g $RG --function-name ProcessWorkbookBlob --query id -o tsv)
+
+      az eventgrid event-subscription create \
+        --name rxodocnorm-input-blobcreated \
+        --source-resource-id $STORAGE_ID \
+        --included-event-types Microsoft.Storage.BlobCreated \
+        --subject-begins-with '/blobServices/default/containers/input/blobs/' \
+        --endpoint-type azurefunction \
+        --endpoint $FUNC_ID
 
 4.2  Rebuild and push Streamlit image to ACR (if code changed):
        az acr build --registry rxodocnormacr \
