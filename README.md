@@ -7,9 +7,6 @@ This repository implements an AI-driven Excel schema standardization platform fo
 - Copy `local.settings.template.json` to `local.settings.json` for local development.
 - Never commit `local.settings.json`, `.env*`, or generated runtime artifacts.
 - Report vulnerabilities via [SECURITY.md](SECURITY.md).
-- See contribution process in [CONTRIBUTING.md](CONTRIBUTING.md).
-- Repository license: [LICENSE](LICENSE).
-- Community expectations: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## Project Structure
 
@@ -33,7 +30,8 @@ This repository implements an AI-driven Excel schema standardization platform fo
 - Optional blob mirror mode:
   - `ARTIFACT_STORAGE_MODE=blob`
   - `ARTIFACT_BLOB_CONTAINER=<container-name>` (default `artifacts`)
-  - Uses `AzureWebJobsStorage` connection string
+  - Local development can use `AzureWebJobsStorage`
+  - Cloud deployments use managed identity with `AzureWebJobsStorage__accountName`
   - Writes local artifacts and mirrors them to blob with a manifest
 
 ## Getting Started
@@ -91,10 +89,12 @@ This repository implements an AI-driven Excel schema standardization platform fo
 ## Streamlit Companion App
 
 - UI/UX plan: [docs/streamlit_uiux_plan.md](docs/streamlit_uiux_plan.md)
-- Launch command: `streamlit run streamlit_app.py`
+- Local launch command: `python -m streamlit run streamlit_app.py --server.headless true`
+- Cloud hosting: Azure Container Apps backed by ACR image builds from [Dockerfile.streamlit](Dockerfile.streamlit)
 - Capabilities:
   - Browse prior runs discovered from local artifact roots
   - Launch new runs from `examples/inputs/*.xlsx`
+  - Submit blob-trigger runs against Azure Blob Storage containers
   - Visualize canonical output table, planner payload/script, validation issues, and sandbox execution logs
 
 ## Blob Trigger Function App Entry
@@ -126,38 +126,63 @@ To run locally with Azure Functions Core Tools:
 
 ## Infrastructure (Bicep)
 
+- Azure Functions hosting: Flex Consumption (`FC1`)
+- Streamlit hosting: Azure Container Apps
+- Container registry: Azure Container Registry (`rxodocnormacr.azurecr.io`)
+- Production storage auth: managed identity (no storage connection string required)
+
 - Main template: `infra/main.bicep`
 - Environment parameter files:
   - `infra/main.dev.bicepparam`
   - `infra/main.test.bicepparam`
   - `infra/main.prod.bicepparam`
 - Modules included:
-  - storage, monitoring, key vault, function plan, function app, RBAC roles, optional container apps execution worker
+  - storage
+  - monitoring
+  - key vault
+  - function plan
+  - function app
+  - streamlit container app
+  - RBAC roles
+  - optional container apps execution worker
 
 Deploy examples:
-- Dev: `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam`
-- Test: `az deployment group create --resource-group <rg-name> --parameters infra/main.test.bicepparam`
-- Prod: `az deployment group create --resource-group <rg-name> --parameters infra/main.prod.bicepparam`
+- Dev: `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam --parameters acrLoginServer='rxodocnormacr.azurecr.io' acrUsername='<acr-admin-user>' acrPassword='<acr-admin-password>'`
+- Test: `az deployment group create --resource-group <rg-name> --parameters infra/main.test.bicepparam --parameters acrLoginServer='rxodocnormacr.azurecr.io' acrUsername='<acr-admin-user>' acrPassword='<acr-admin-password>'`
+- Prod: `az deployment group create --resource-group <rg-name> --parameters infra/main.prod.bicepparam --parameters acrLoginServer='rxodocnormacr.azurecr.io' acrUsername='<acr-admin-user>' acrPassword='<acr-admin-password>'`
 
 ### Minimal infra runbook (dev)
 
-1) Baseline dev deployment (Function App + core resources)
-- `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam`
+1) Build and push the Streamlit image to ACR
+- `az acr build --registry rxodocnormacr --image streamlit-ui:<tag> --file Dockerfile.streamlit . --no-logs`
 
-2) Enable optional container worker (Container Apps environment + job)
-- `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam --parameters enableContainerWorker=true`
+2) Deploy baseline dev infrastructure (Function App + Container App + core resources)
+- `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam --parameters acrLoginServer='rxodocnormacr.azurecr.io' acrUsername='<acr-admin-user>' acrPassword='<acr-admin-password>' streamlitContainerImage='streamlit-ui:<tag>'`
 
-3) Grant worker identity data-plane access (Storage + Key Vault)
-- `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam --parameters enableContainerWorker=true assignContainerWorkerRoles=true`
+3) Publish Function App code
+- `func azure functionapp publish func-rxodocnorm-dev --python`
 
-4) Also grant worker Foundry access (if your worker needs direct Foundry calls)
-- `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam --parameters enableContainerWorker=true assignContainerWorkerRoles=true assignContainerWorkerFoundryRoles=true assignFoundryRoles=true foundryAccountName=<foundry-account-name> foundryProjectName=<foundry-project-name>`
+4) Roll forward the Streamlit Container App image on later UI changes
+- `az containerapp update --name rxodocnorm-streamlit-dev-app --resource-group <rg-name> --image rxodocnormacr.azurecr.io/streamlit-ui:<tag>`
 
-5) Inspect useful deployment outputs
+5) Optional: enable container worker (Container Apps environment + job)
+- `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam --parameters acrLoginServer='rxodocnormacr.azurecr.io' acrUsername='<acr-admin-user>' acrPassword='<acr-admin-password>' enableContainerWorker=true streamlitContainerImage='streamlit-ui:<tag>'`
+
+6) Optional: grant worker identity data-plane access (Storage + Key Vault)
+- `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam --parameters acrLoginServer='rxodocnormacr.azurecr.io' acrUsername='<acr-admin-user>' acrPassword='<acr-admin-password>' enableContainerWorker=true assignContainerWorkerRoles=true streamlitContainerImage='streamlit-ui:<tag>'`
+
+7) Optional: also grant worker Foundry access
+- `az deployment group create --resource-group <rg-name> --parameters infra/main.dev.bicepparam --parameters acrLoginServer='rxodocnormacr.azurecr.io' acrUsername='<acr-admin-user>' acrPassword='<acr-admin-password>' enableContainerWorker=true assignContainerWorkerRoles=true assignContainerWorkerFoundryRoles=true assignFoundryRoles=true foundryAccountName=<foundry-account-name> foundryProjectName=<foundry-project-name> streamlitContainerImage='streamlit-ui:<tag>'`
+
+8) Inspect useful deployment outputs
 - `functionAppName`
+- `streamlitAppName`
+- `streamlitFqdn`
 - `containerWorkerJobResourceId`
 - `containerWorkerManagedEnvironmentId`
 - `containerWorkerPrincipalId`
+
+For the detailed cloud deployment workflow, see [infra/ghcp_deploy_kickoff.md](infra/ghcp_deploy_kickoff.md) and [infra/rbac_assignments.md](infra/rbac_assignments.md).
 
 New Foundry runtime configuration is parameterized in Bicep via:
 - `foundryProjectEndpoint`
@@ -182,6 +207,10 @@ New Foundry runtime configuration is parameterized in Bicep via:
 - Phase 10 artifact store seam + execution result artifact alignment (`src/function_app/services/artifact_store.py`, `execution_result.json` in pipeline outputs)
 - Phase 11 packaging/tooling baseline (`pyproject.toml`, `.gitignore`)
 - Phase 12 blob-backed artifact store seam and local-to-blob mirroring (`src/function_app/services/artifact_store.py`)
+- Schema cache fingerprinting + local cache repository (`src/function_app/services/schema_fingerprint.py`, `src/function_app/services/schema_cache.py`)
+- Notes post-processing service + agent prompt (`src/function_app/services/notes_postprocessor.py`, `src/function_app/prompts/notes_postprocess_system.txt`)
+- Streamlit Container App deployment module + ACR-based image delivery (`infra/modules/streamlitApp.bicep`, `Dockerfile.streamlit`)
+- Foundry agent deployment and backfill utility scripts (`scripts/deploy-foundry-agent.py`, `scripts/deploy-postprocess-agent.py`, `scripts/backfill-*.py`)
 - Early unit tests covering classifier behavior and workbook profiling on sample workbook (`tests/`)
 
 ## Implementation Status

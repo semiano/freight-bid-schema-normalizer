@@ -52,7 +52,7 @@ PHASE 1 — PRE-FLIGHT VALIDATION
        - enableWebApp                            = false  (VM quota is zero)
        - enableStreamlitContainerApp             = true
        - acrLoginServer                          = 'rxodocnormacr.azurecr.io'
-       - streamlitContainerImage                 (e.g. 'streamlit-ui:v1')
+  - streamlitContainerImage                 (e.g. 'streamlit-ui:<tag>')
        - foundryAgentVersion                     (must be "5")
        - foundryPostProcessAgentName             = "RXO-Notes-PostProcessor"
        - foundryPostProcessAgentVersion          = "1"
@@ -91,7 +91,7 @@ PHASE 2 — DEPLOY INFRASTRUCTURE  (target: dev by default)
        ✓ 4+ RBAC role assignments (blob data owner, KV secrets user,
            blob data contributor for Streamlit, etc.)
        ✗ Web App = disabled (enableWebApp=false, VM quota is zero)
-       ✗ Container Worker = disabled (no Container Apps resources)
+         ✗ Container Worker = disabled (no additional worker resources)
        ✗ Foundry project = not created (createFoundryProject=false)
 
      Report any unexpected creates, deletes, or modifications.
@@ -142,11 +142,13 @@ Refer to infra/rbac_assignments.md for the complete role matrix.
        [ ] Key Vault Secrets User on Key Vault
        [ ] (if assignFoundryRoles=true) Cognitive Services OpenAI User on Foundry account
        [ ] (if assignFoundryRoles=true) Azure AI User on Foundry project
+       [ ] (if cross-RG manual RBAC) Azure AI Developer on Foundry account
 
      Streamlit Container App:
        [ ] Storage Blob Data Contributor on storage account
        [ ] (if assignFoundryRoles=true) Cognitive Services OpenAI User on Foundry account
        [ ] (if assignFoundryRoles=true) Azure AI User on Foundry project
+       [ ] (if cross-RG manual RBAC) Azure AI Developer on Foundry account
 
      GATE: ALL required roles must show PASS.
            If any show FAIL, diagnose and fix before proceeding.
@@ -160,17 +162,23 @@ PHASE 4 — APPLICATION DEPLOYMENT
 
 4.2  Rebuild and push Streamlit image to ACR (if code changed):
        az acr build --registry rxodocnormacr \
-         --image streamlit-ui:v2 \
+         --image streamlit-ui:<tag> \
          --file Dockerfile.streamlit . --no-logs
 
-       # Then update the Container App with the new image:
+       # Then update the Container App with the new image (fast path):
+       az containerapp update \
+         --name rxodocnorm-streamlit-$ENV-app \
+         --resource-group $RG \
+         --image rxodocnormacr.azurecr.io/streamlit-ui:<tag>
+
+       # Or keep image tag in IaC state by redeploying Bicep:
        az deployment group create \
          --resource-group $RG \
          --parameters infra/main.${ENV}.bicepparam \
          --parameters acrLoginServer='rxodocnormacr.azurecr.io' \
                      acrUsername='<acr-admin-user>' \
                      acrPassword='<acr-admin-password>' \
-                     streamlitContainerImage='streamlit-ui:v2'
+                     streamlitContainerImage='streamlit-ui:<tag>'
 
 4.3  Smoke tests:
        # Function App health
@@ -194,7 +202,8 @@ values are pushed back into the Bicep deployment as env vars.
 See infra/rbac_assignments.md §3 for detailed walkthrough.
 
 5.1  PREREQUISITE: Ensure Foundry RBAC is enabled.
-     If not already done, redeploy with Foundry params:
+
+  If Foundry is in the SAME resource group as deployment, redeploy with:
 
        az deployment group create \
          --resource-group $RG \
@@ -205,6 +214,19 @@ See infra/rbac_assignments.md §3 for detailed walkthrough.
                      foundryProjectEndpoint='<FOUNDRY_ENDPOINT>' \
                      assignFoundryRoles=true \
                      foundryAccountName='<foundry-account-name>'
+
+     If Foundry is in a DIFFERENT resource group, keep `assignFoundryRoles=false`
+     and assign roles manually on the Foundry account scope:
+
+       FOUNDRY_ID=$(az cognitiveservices account show -n <foundry-account-name> -g <foundry-rg> --query id -o tsv)
+       FUNC_MI=$(az functionapp identity show -n func-rxodocnorm-$ENV -g $RG --query principalId -o tsv)
+       STREAMLIT_MI=$(az containerapp identity show -n rxodocnorm-streamlit-$ENV-app -g $RG --query principalId -o tsv)
+
+       for MI in $FUNC_MI $STREAMLIT_MI; do
+         az role assignment create --assignee $MI --role "Cognitive Services OpenAI User" --scope $FOUNDRY_ID
+         az role assignment create --assignee $MI --role "Azure AI User"                  --scope $FOUNDRY_ID
+         az role assignment create --assignee $MI --role "Azure AI Developer"             --scope $FOUNDRY_ID
+       done
 
      GATE: Confirm Foundry RBAC roles are assigned (Phase 3 checklist).
 
@@ -320,8 +342,10 @@ Generate a summary table with:
 | Blob Data Contributor (Streamlit)| assigned                          | ✓/✗    |
 | Foundry OpenAI User (Func)      | assigned / skipped                 | ✓/—    |
 | Foundry AI User (Func)          | assigned / skipped                 | ✓/—    |
+| Foundry AI Developer (Func)     | assigned / skipped                 | ✓/—    |
 | Foundry OpenAI User (Streamlit) | assigned / skipped                 | ✓/—    |
 | Foundry AI User (Streamlit)     | assigned / skipped                 | ✓/—    |
+| Foundry AI Developer (Streamlit)| assigned / skipped                 | ✓/—    |
 | Container Worker                | disabled                           | —      |
 | Transform Planner Agent         | v5 deployed / pending              | ✓/⏳   |
 | Notes Post-Processor Agent      | v1 deployed / pending              | ✓/⏳   |

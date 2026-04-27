@@ -66,10 +66,12 @@ Before creating agents you need:
 
 1. **A Foundry Account + Project** — either existing or created by Bicep
    (`createFoundryProject=true`).
-2. **RBAC roles assigned** — `assignFoundryRoles=true` in the param file.
-   This grants the Function App and Streamlit Container App identities
-   `Cognitive Services OpenAI User` + `Azure AI User` on the Foundry
-   account/project.
+2. **RBAC roles assigned** — if Foundry is in the same RG, use
+  `assignFoundryRoles=true` in the param file. If Foundry is in a different RG,
+  assign roles manually (see Cross-RG note below).
+  Required roles for Function App + Streamlit Container App identities:
+  `Cognitive Services OpenAI User` + `Azure AI User` (+ `Azure AI Developer`
+  for agent management/listing scenarios).
 3. **`FOUNDRY_PROJECT_ENDPOINT`** — the full endpoint URL. Looks like:
    `https://<account>.services.ai.azure.com/api/projects/<project-name>`
 4. **Storage account public access** — the storage account must have
@@ -331,7 +333,7 @@ az role assignment list --assignee-object-id "$FUNC_PRINCIPAL" --scope "$STORAGE
 |---|---|---|
 | `AuthorizationFailed` on blob read | Missing Storage Blob Data Owner/Contributor | Re-run `az deployment group create` or manually assign role |
 | `AuthorizationFailure` on blob upload (not `PermissionMismatch`) | Storage account `publicNetworkAccess` is `Disabled` — Container Apps are **not** on Azure's trusted-service bypass list | Enable public access: `az storage account update --name <account> --resource-group <rg> --public-network-access Enabled`. The Bicep template now sets this explicitly in `storage.bicep`, but an Azure Policy or manual change can override it. |
-| `403 Forbidden` from Foundry endpoint | Missing OpenAI User or AI User role | Set `assignFoundryRoles = true` in param file, redeploy |
+| `403 Forbidden` from Foundry endpoint | Missing OpenAI User or AI User role | Same-RG: set `assignFoundryRoles = true` and redeploy. Cross-RG: assign roles manually on the Foundry account scope (see §3a). |
 | `401 PermissionDenied` from Foundry endpoint (cross-RG) | Foundry account is in a **different resource group** — Bicep `existing` can't reference it | Assign roles manually (see §3a cross-RG note below) |
 | Key Vault 403 | MI not in KV Secrets User | Check `enableRbacAuthorization` is true on KV; redeploy roles module |
 | Streamlit can't upload workbook | Container App MI missing blob contributor | Ensure `assignStreamlitAppRoles = true` (default when `enableStreamlitContainerApp = true`) |
@@ -433,11 +435,19 @@ az deployment group create \
 # Function App code deploy
 func azure functionapp publish func-rxodocnorm-dev --python
 
-# Streamlit image rebuild + redeploy
+# Streamlit image rebuild + deploy
 az acr build --registry rxodocnormacr \
-  --image streamlit-ui:v2 \
+  --image streamlit-ui:<tag> \
   --file Dockerfile.streamlit . --no-logs
-# Then redeploy with: --parameters streamlitContainerImage='streamlit-ui:v2'
+
+# Option A: update Container App directly (fast path)
+az containerapp update \
+  --name rxodocnorm-streamlit-dev-app \
+  --resource-group rg-rxodocnorm-dev \
+  --image rxodocnormacr.azurecr.io/streamlit-ui:<tag>
+
+# Option B: redeploy Bicep with updated image tag
+# --parameters streamlitContainerImage='streamlit-ui:<tag>'
 ```
 
 ---
