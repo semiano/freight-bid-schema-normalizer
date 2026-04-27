@@ -12,15 +12,27 @@ param tags = {
 param plannerMode = 'live'
 param runMode = 'execute_with_validation'
 
-param foundryProjectEndpoint = ''
+param foundryProjectEndpoint = 'https://demo-foundry-eastus.services.ai.azure.com/api/projects/proj-default'
 param foundryAgentName = 'RXO-Document-Normalizer'
-param foundryAgentVersion = '3'
+param foundryAgentVersion = '5'
 param foundryAssistantId = ''
+
+param foundryPostProcessAgentName = 'RXO-Notes-PostProcessor'
+param foundryPostProcessAgentVersion = '1'
+param postprocessMode = 'mock'
 
 param foundryAccountName = ''
 param foundryProjectName = 'proj-default'
 param createFoundryProject = false
 param assignFoundryRoles = false
+
+param enableWebApp = false
+param webAppPlanSkuName = 'F1'
+param webAppPlanSkuTier = 'Free'
+
+param enableStreamlitContainerApp = true
+param acrLoginServer = 'rxodocnormacr.azurecr.io'
+param streamlitContainerImage = 'streamlit-ui:v3'
 
 param enableContainerWorker = false
 param assignContainerWorkerRoles = false

@@ -7,11 +7,14 @@ param environmentName string
 @description('Azure region for resources.')
 param location string
 
-@description('App Service plan SKU name (Y1 for consumption).')
-param skuName string = 'Y1'
+@description('App Service plan SKU name (FC1 for flex consumption).')
+param skuName string = 'FC1'
 
 @description('App Service plan SKU tier.')
-param skuTier string = 'Dynamic'
+param skuTier string = 'FlexConsumption'
+
+@description('Plan kind – functionapp for Functions, linux for Web Apps.')
+param planKind string = 'functionapp'
 
 @description('Tags applied to the plan.')
 param tags object = {}
@@ -22,7 +25,7 @@ resource functionPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: functionPlanName
   location: location
   tags: tags
-  kind: 'functionapp'
+  kind: planKind
   sku: {
     name: skuName
     tier: skuTier

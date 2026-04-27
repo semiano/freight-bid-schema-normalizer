@@ -40,7 +40,8 @@
     {"name": "Border Crossing City", "dtype": "str"},
     {"name": "Border Crossing State", "dtype": "str"},
     {"name": "Border Crossing Country", "dtype": "str"},
-    {"name": "Strategic Quantile", "dtype": "str"}
+    {"name": "Strategic Quantile", "dtype": "str"},
+    {"name": "Notes JSON", "dtype": "str"}
   ],
   "description": "Canonical schema for RXO freight bid normalization."
 }

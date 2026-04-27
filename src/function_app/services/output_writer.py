@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 from typing import Any
 
@@ -74,4 +75,51 @@ def write_canonical_xlsx(
         worksheet.append([record[column] for column in canonical_columns])
 
     workbook.save(destination)
+    return str(destination)
+
+
+def write_notes_json(
+    planner_notes: list[dict[str, Any]],
+    sandbox_notes: list[dict[str, Any]],
+    output_path: str,
+    change_log: list[dict[str, Any]] | None = None,
+) -> str:
+    """Write the combined notes JSON artifact.
+
+    Merges planner-level notes (from the agent response ``notes_json``)
+    with runtime notes extracted from the sandbox transform ``notes`` list,
+    and optionally includes a post-process change log.
+    """
+    destination = Path(output_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    combined: list[dict[str, Any]] = []
+
+    for note in planner_notes:
+        entry = dict(note)
+        entry.setdefault("origin", "planner")
+        combined.append(entry)
+
+    for note in sandbox_notes:
+        entry = dict(note)
+        entry.setdefault("origin", "transform")
+        combined.append(entry)
+
+    change_log = change_log or []
+
+    payload = {
+        "total_notes": len(combined),
+        "planner_note_count": len(planner_notes),
+        "transform_note_count": len(sandbox_notes),
+        "notes": combined,
+        "post_process_change_log": {
+            "total_updates": len(change_log),
+            "fields_updated": list({c["field"] for c in change_log}),
+            "changes": change_log,
+        },
+    }
+
+    with destination.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, default=str)
+
     return str(destination)

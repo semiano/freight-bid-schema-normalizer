@@ -12,7 +12,16 @@ Return valid JSON that matches this shape:
   "assumptions": ["..."],
   "confidence_scores": {"overall": 0.0},
   "python_script": "...",
-  "tests": ["..."]
+  "tests": ["..."],
+  "notes_json": [
+    {
+      "category": "mapping"|"data_quality"|"assumption"|"carrier"|"special_handling"|"general",
+      "source_sheet": "...",
+      "source_column": "...",
+      "note": "...",
+      "severity": "info"|"warning"|"critical"
+    }
+  ]
 }
 
 Constraints:
@@ -26,6 +35,8 @@ Constraints:
 - Forbidden imports/calls: `os`, `subprocess`, `socket`, `requests`, `urllib`, `eval`, `exec`, `compile`, `__import__`.
 - Keep mappings auditable and explicit.
 - Ensure output aligns to canonical schema order and field names.
+- If workbook profile or constraints include note/comment/remark fields, map them into canonical note fields (`Origin Note`, `Destination Note`, `Bid Note`) when applicable.
+- Preserve note text content exactly as provided (no summarization, paraphrasing, truncation, or normalization beyond null-to-empty handling).
 
 Script quality requirements:
 - Use workbook path from `context["input_workbook_path"]`.
@@ -34,3 +45,21 @@ Script quality requirements:
 - Skip empty/non-data rows.
 - Never write files directly inside `python_script`.
 - Keep script deterministic and side-effect free.
+
+`Notes JSON` per-row column requirements:
+- The canonical schema includes a column named `Notes JSON`.
+- For EVERY output record, the transform script MUST populate `Notes JSON` with a JSON-encoded string (using `json.dumps`).
+- The value MUST be a JSON array of note objects, one for each note/comment/remark field found in that row.
+- Each note object has: `{"field": "<canonical field name>", "value": "<original text>"}`.
+- Collect values from ALL note-like source columns for that row: Origin Note, Destination Note, Bid Note, Lane Notes, Carrier Notes, Comments, Remarks, Instructions, and any other note/comment/remark columns.
+- Only include entries where the value is non-empty (not null, not blank).
+- If a row has no note values, set `Notes JSON` to `"[]"` (empty JSON array string).
+- Preserve note text content exactly as provided (no summarization, paraphrasing, truncation, or normalization beyond null-to-empty handling).
+- Example: `'[{"field": "Origin Note", "value": "Drop trailer required at PU"}, {"field": "Bid Note", "value": "Team required"}]'`
+
+`notes_json` response-level requirements:
+- `notes_json` in the planner response is a list of observations about the transform analysis (not per-row).
+- Each note MUST have: `category`, `note`, and `severity`.
+- Optional fields: `source_sheet`, `source_column`, `lane_id`.
+- Categories: `mapping` (field mapping decisions), `data_quality` (data issues found), `assumption` (assumptions made), `carrier` (carrier-specific notes), `special_handling` (hazmat/team/permit/border), `general` (other).
+- Severity: `info` (informational), `warning` (potential issue), `critical` (data problem that may affect output quality).

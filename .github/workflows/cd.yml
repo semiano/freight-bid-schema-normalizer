@@ -1,0 +1,112 @@
+name: CD – Deploy Infrastructure & Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+      deploy_infra:
+        description: "Deploy Bicep infrastructure"
+        type: boolean
+        default: true
+      deploy_function:
+        description: "Deploy Function App code"
+        type: boolean
+        default: true
+      deploy_webapp:
+        description: "Deploy Streamlit Web App"
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: "rg-rxodocnorm-${{ github.event.inputs.environment }}"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  deploy-infra:
+    name: Deploy Bicep (${{ github.event.inputs.environment }})
+    if: ${{ github.event.inputs.deploy_infra == 'true' }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep
+        uses: azure/arm-deploy@v2
+        with:
+          scope: resourcegroup
+          resourceGroupName: ${{ env.AZURE_RESOURCE_GROUP }}
+          template: infra/main.bicep
+          parameters: infra/main.${{ github.event.inputs.environment }}.bicepparam
+          deploymentMode: Incremental
+          failOnStdErr: false
+
+  deploy-function:
+    name: Publish Function App
+    if: ${{ github.event.inputs.deploy_function == 'true' }}
+    needs: deploy-infra
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure Functions
+        uses: Azure/functions-action@v1
+        with:
+          app-name: "func-rxodocnorm-${{ github.event.inputs.environment }}"
+          package: "."
+
+  deploy-webapp:
+    name: Publish Streamlit Web App
+    if: ${{ github.event.inputs.deploy_webapp == 'true' }}
+    needs: deploy-infra
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: "web-rxodocnorm-${{ github.event.inputs.environment }}"
+          package: "."
+          startup-command: "python -m streamlit run streamlit_app.py --server.port 8000 --server.address 0.0.0.0"

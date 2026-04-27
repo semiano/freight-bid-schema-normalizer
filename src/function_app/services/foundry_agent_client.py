@@ -58,6 +58,9 @@ class FoundryAgentClient:
                 "FO Code": "constant:RXOCode",
                 "Origin City": "input:ORIGIN CITY",
                 "Destination City": "input:DESTINATION CITY",
+                "Origin Note": "input:ORIGIN NOTE|ORIGIN NOTES|ORIGIN COMMENT|ORIGIN REMARKS",
+                "Destination Note": "input:DESTINATION NOTE|DESTINATION NOTES|DESTINATION COMMENT|DESTINATION REMARKS",
+                "Bid Note": "input:BID NOTE|BID NOTES|CARRIER NOTES|NOTES|COMMENTS|REMARKS|LANE NOTES",
             },
             "constants": {
                 "FO Code": "RXOCode",
@@ -69,12 +72,30 @@ class FoundryAgentClient:
             },
             "assumptions": ["Only primary live load sheet is included for v1 planner mock."],
             "confidence_scores": {"overall": 0.72},
-            "python_script": """from openpyxl import load_workbook
+            "python_script": """import json
+from openpyxl import load_workbook
 
 def _norm_header(value):
     if value is None:
         return ""
     return str(value).strip().upper()
+
+NOTE_FIELDS = [
+    ("Origin Note", [
+        "ORIGIN NOTE", "ORIGIN NOTES", "ORIGIN COMMENT", "ORIGIN COMMENTS",
+        "ORIGIN REMARK", "ORIGIN REMARKS", "ORIGIN INSTRUCTION", "ORIGIN INSTRUCTIONS",
+    ]),
+    ("Destination Note", [
+        "DESTINATION NOTE", "DESTINATION NOTES", "DEST NOTE", "DEST NOTES",
+        "DESTINATION COMMENT", "DESTINATION COMMENTS", "DESTINATION REMARK",
+        "DESTINATION REMARKS", "DEST INSTRUCTION", "DEST INSTRUCTIONS",
+    ]),
+    ("Bid Note", [
+        "BID NOTE", "BID NOTES", "CARRIER NOTE", "CARRIER NOTES",
+        "LANE NOTE", "LANE NOTES", "NOTES", "NOTE", "COMMENTS", "COMMENT",
+        "REMARKS", "REMARK",
+    ]),
+]
 
 def _row_to_record(row, index_map, row_number):
     def val(*names):
@@ -89,6 +110,18 @@ def _row_to_record(row, index_map, row_number):
     origin_country = val("ORIGIN COUNTRY", "ORIGIN_COUNTRY", "ORIGIN CNTRY") or "US"
     dest_country = val("DESTINATION COUNTRY", "DESTINATION_COUNTRY", "DEST COUNTRY", "DEST CNTRY") or "US"
 
+    origin_note = val(*NOTE_FIELDS[0][1])
+    dest_note = val(*NOTE_FIELDS[1][1])
+    bid_note = val(*NOTE_FIELDS[2][1])
+
+    notes_array = []
+    if origin_note and str(origin_note).strip():
+        notes_array.append({"field": "Origin Note", "value": str(origin_note).strip()})
+    if dest_note and str(dest_note).strip():
+        notes_array.append({"field": "Destination Note", "value": str(dest_note).strip()})
+    if bid_note and str(bid_note).strip():
+        notes_array.append({"field": "Bid Note", "value": str(bid_note).strip()})
+
     return {
         "Customer Lane ID": f"LANE-{row_number}",
         "FO Code": "RXOCode",
@@ -100,11 +133,15 @@ def _row_to_record(row, index_map, row_number):
         "Destination State": val("DESTINATION STATE", "DESTINATION_STATE", "DEST STATE", "DEST ST"),
         "Destination Zip": val("DESTINATION ZIP", "DESTINATION_ZIP", "DEST ZIP", "DEST ZIP CODE", "DEST POSTAL", "DEST_ZIP3"),
         "Destination Country": "USA" if str(dest_country).strip().upper() in {"US", "USA", "UNITED STATES"} else dest_country,
+        "Origin Note": str(origin_note).strip() if origin_note else "",
+        "Destination Note": str(dest_note).strip() if dest_note else "",
+        "Bid Note": str(bid_note).strip() if bid_note else "",
         "Annual Volume": val("SHIPMENT COUNT", "LOADS PER YEAR", "ANNUAL VOLUME", "VOLUME"),
         "Equipment Category": "V",
         "Rate Type": "5T3",
         "Fuel Surcharge": "0.78",
         "FSC Type": "PerMileAmount",
+        "Notes JSON": json.dumps(notes_array),
     }
 
 def transform(context: dict) -> dict:
@@ -167,18 +204,64 @@ def transform(context: dict) -> dict:
                     continue
                 records.append(record)
 
+        notes = []
+        for idx, rec in enumerate(records):
+            for note_field in ("Origin Note", "Destination Note", "Bid Note"):
+                note_value = rec.get(note_field, "")
+                if note_value and str(note_value).strip():
+                    notes.append({
+                        "category": "carrier" if note_field == "Bid Note" else "special_handling",
+                        "source_sheet": relevant_sheets[0] if relevant_sheets else "",
+                        "source_column": note_field,
+                        "note": str(note_value).strip(),
+                        "severity": "info",
+                        "lane_id": rec.get("Customer Lane ID", f"LANE-{idx+1}"),
+                    })
+
         return {
             "records": records,
+            "notes": notes,
             "metadata": {
                 "relevant_sheets": relevant_sheets,
                 "ignored_sheets": ignored_sheets,
                 "record_count": len(records),
+                "note_count": len(notes),
             },
         }
     finally:
         workbook.close()
 """,
             "tests": ["assert 'FO Code' in output_columns"],
+            "notes_json": [
+                {
+                    "category": "mapping",
+                    "source_sheet": "",
+                    "source_column": "",
+                    "note": "Customer Lane ID is derived from row number (LANE-{row_number}).",
+                    "severity": "info",
+                },
+                {
+                    "category": "assumption",
+                    "source_sheet": "",
+                    "source_column": "",
+                    "note": "Equipment Category defaulted to 'V' (Van) for all lanes.",
+                    "severity": "info",
+                },
+                {
+                    "category": "assumption",
+                    "source_sheet": "",
+                    "source_column": "",
+                    "note": "Origin/Destination Country defaults to 'USA' when not provided.",
+                    "severity": "warning",
+                },
+                {
+                    "category": "data_quality",
+                    "source_sheet": "",
+                    "source_column": "ORIGIN NOTE|DESTINATION NOTE|BID NOTE",
+                    "note": "Note/comment columns are preserved as-is from source data.",
+                    "severity": "info",
+                },
+            ],
         }
 
     def _live_response(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:

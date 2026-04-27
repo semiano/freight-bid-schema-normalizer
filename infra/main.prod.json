@@ -1,0 +1,92 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "prod"
+    },
+    "location": {
+      "value": "eastus"
+    },
+    "baseName": {
+      "value": "rxodocnorm"
+    },
+    "tags": {
+      "value": {
+        "app": "rxo-document-normalizer",
+        "environment": "prod",
+        "owner": "rxo-data-platform",
+        "criticality": "high"
+      }
+    },
+    "storageSkuName": {
+      "value": "Standard_GRS"
+    },
+    "workspaceRetentionInDays": {
+      "value": 90
+    },
+    "functionPlanSkuName": {
+      "value": "FC1"
+    },
+    "functionPlanSkuTier": {
+      "value": "FlexConsumption"
+    },
+    "plannerMode": {
+      "value": "live"
+    },
+    "runMode": {
+      "value": "execute_with_validation"
+    },
+    "foundryProjectEndpoint": {
+      "value": ""
+    },
+    "foundryAgentName": {
+      "value": "RXO-Document-Normalizer"
+    },
+    "foundryAgentVersion": {
+      "value": "5"
+    },
+    "foundryAssistantId": {
+      "value": ""
+    },
+    "foundryPostProcessAgentName": {
+      "value": "RXO-Notes-PostProcessor"
+    },
+    "foundryPostProcessAgentVersion": {
+      "value": "1"
+    },
+    "postprocessMode": {
+      "value": "live"
+    },
+    "foundryAccountName": {
+      "value": ""
+    },
+    "foundryProjectName": {
+      "value": "proj-default"
+    },
+    "createFoundryProject": {
+      "value": false
+    },
+    "assignFoundryRoles": {
+      "value": false
+    },
+    "enableWebApp": {
+      "value": false
+    },
+    "webAppPlanSkuName": {
+      "value": "F1"
+    },
+    "webAppPlanSkuTier": {
+      "value": "Free"
+    },
+    "enableStreamlitContainerApp": {
+      "value": true
+    },
+    "acrLoginServer": {
+      "value": "rxodocnormacr.azurecr.io"
+    },
+    "streamlitContainerImage": {
+      "value": "streamlit-ui:v1"
+    }
+  }
+}

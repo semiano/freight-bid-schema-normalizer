@@ -63,20 +63,46 @@ def _validate_live_mode_configuration() -> list[str]:
 
 def _validate_blob_trigger_configuration() -> list[str]:
     missing: list[str] = []
-    required = ["AzureWebJobsStorage", "INPUT_CONTAINER", "OUTPUT_CONTAINER"]
-    for key in required:
+    # Storage access: connection string (local) OR account name + MI (cloud)
+    has_conn_str = bool(os.getenv("AzureWebJobsStorage", "").strip())
+    has_account_name = bool(os.getenv("STORAGE_ACCOUNT_NAME", "").strip())
+    if not has_conn_str and not has_account_name:
+        missing.append("AzureWebJobsStorage or STORAGE_ACCOUNT_NAME")
+    for key in ["INPUT_CONTAINER", "OUTPUT_CONTAINER"]:
         if not os.getenv(key, "").strip():
             missing.append(key)
     return missing
 
 
-def _create_blob_service_client(connection_string: str) -> BlobServiceClient:
-    is_local_emulator = "UseDevelopmentStorage=true" in connection_string or "127.0.0.1" in connection_string
-    if is_local_emulator:
-        api_version = os.getenv("AZURE_BLOB_API_VERSION", AZURITE_COMPAT_API_VERSION).strip()
-        if api_version:
-            return BlobServiceClient.from_connection_string(connection_string, api_version=api_version)
-    return BlobServiceClient.from_connection_string(connection_string)
+def _create_blob_service_client(connection_string: str = "") -> BlobServiceClient:
+    """Create a BlobServiceClient.
+
+    Uses *connection_string* when provided (local dev / Azurite).
+    Falls back to managed-identity via ``DefaultAzureCredential`` +
+    ``STORAGE_ACCOUNT_NAME`` when running in Azure (Container App, Web App).
+    """
+    if connection_string.strip():
+        is_local_emulator = (
+            "UseDevelopmentStorage=true" in connection_string
+            or "127.0.0.1" in connection_string
+        )
+        if is_local_emulator:
+            api_version = os.getenv("AZURE_BLOB_API_VERSION", AZURITE_COMPAT_API_VERSION).strip()
+            if api_version:
+                return BlobServiceClient.from_connection_string(connection_string, api_version=api_version)
+        return BlobServiceClient.from_connection_string(connection_string)
+
+    # MI fallback — requires STORAGE_ACCOUNT_NAME env var
+    account_name = os.getenv("STORAGE_ACCOUNT_NAME", "").strip()
+    if not account_name:
+        raise ValueError(
+            "No blob storage configuration. Set AzureWebJobsStorage (connection string) "
+            "or STORAGE_ACCOUNT_NAME (managed-identity) in your environment."
+        )
+    from azure.identity import DefaultAzureCredential
+
+    account_url = f"https://{account_name}.blob.core.windows.net"
+    return BlobServiceClient(account_url, credential=DefaultAzureCredential())
 
 
 def _submit_blob_trigger_run(input_workbook: Path) -> str:
@@ -136,127 +162,160 @@ def _fetch_foundry_agents_snapshot(
     agent_name: str,
     assistant_id: str,
 ) -> dict[str, Any]:
+    """Fetch only the system-expected agents from Foundry.
+
+    Expected agents are read from local.settings.json Values:
+      * FOUNDRY_AGENT_NAME / FOUNDRY_AGENT_VERSION  (Transform Planner)
+      * FOUNDRY_POSTPROCESS_AGENT_NAME / FOUNDRY_POSTPROCESS_AGENT_VERSION (Notes Post-Processor)
+
+    Only those two agents are returned regardless of how many agents
+    exist in the Foundry project.
+    """
     if not endpoint.strip():
         return {"agents": [], "error": "FOUNDRY_PROJECT_ENDPOINT is not configured."}
 
+    # Build the list of expected agents from environment
+    expected_agents: list[dict[str, Any]] = [
+        {
+            "role": "Transform Planner",
+            "env_name_key": "FOUNDRY_AGENT_NAME",
+            "env_version_key": "FOUNDRY_AGENT_VERSION",
+            "configured_name": os.getenv("FOUNDRY_AGENT_NAME", "").strip(),
+            "configured_version": os.getenv("FOUNDRY_AGENT_VERSION", "").strip(),
+        },
+        {
+            "role": "Notes Post-Processor",
+            "env_name_key": "FOUNDRY_POSTPROCESS_AGENT_NAME",
+            "env_version_key": "FOUNDRY_POSTPROCESS_AGENT_VERSION",
+            "configured_name": os.getenv("FOUNDRY_POSTPROCESS_AGENT_NAME", "").strip(),
+            "configured_version": os.getenv("FOUNDRY_POSTPROCESS_AGENT_VERSION", "").strip(),
+        },
+    ]
+
+    expected_names = {ea["configured_name"] for ea in expected_agents if ea["configured_name"]}
+
+    # Fetch all agents from the project, then filter to expected ones
     client = FoundryAgentClient(
         endpoint=endpoint,
         agent_name=agent_name,
         mode="live",
     )
-    client.assistant_id = assistant_id
+    client.assistant_id = assistant_id or ""
 
+    all_remote: list[dict[str, Any]] = []
+    fetch_error: str | None = None
     try:
         payload = client._get_json(f"{endpoint.rstrip('/')}/assistants?api-version={api_version}")
-    except Exception as error:
-        return {"agents": [], "error": str(error)}
-
-    agents: list[dict[str, Any]] = []
-    data = payload.get("data", []) if isinstance(payload, dict) else []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        agents.append(
-            {
+        data = payload.get("data", []) if isinstance(payload, dict) else []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            remote_name = item.get("name") or item.get("id") or "Unknown"
+            all_remote.append({
                 "assistant_id": item.get("id") or "",
-                "agent_name": item.get("name") or item.get("id") or "Unknown",
+                "agent_name": remote_name,
                 "endpoint": endpoint,
                 "system_prompt": item.get("instructions") or "",
-            }
-        )
+                "model": item.get("model") or "",
+                "created_at": item.get("created_at") or "",
+            })
+    except Exception as error:
+        fetch_error = str(error)
 
-    selected_assistant_id = ""
-    selected_agent_name = ""
+    # Build enriched agent cards — one per expected agent
+    agents: list[dict[str, Any]] = []
+    for ea in expected_agents:
+        configured_name = ea["configured_name"]
+        configured_version = ea["configured_version"]
+        role = ea["role"]
 
-    configured_assistant_id = assistant_id.strip()
-    configured_agent_name = agent_name.strip()
+        # Find matching remote agent(s) by name
+        matches = [r for r in all_remote if r["agent_name"] == configured_name]
+        remote = matches[0] if matches else None
 
-    if configured_assistant_id:
-        by_id = next((agent for agent in agents if agent.get("assistant_id") == configured_assistant_id), None)
-        if by_id is not None:
-            selected_assistant_id = str(by_id.get("assistant_id") or "")
-            selected_agent_name = str(by_id.get("agent_name") or "")
+        status = "connected" if remote else ("not_found" if not fetch_error else "fetch_error")
 
-    if not selected_assistant_id and configured_agent_name:
-        by_name = [agent for agent in agents if str(agent.get("agent_name") or "") == configured_agent_name]
-        if by_name:
-            selected_assistant_id = str(by_name[0].get("assistant_id") or "")
-            selected_agent_name = str(by_name[0].get("agent_name") or "")
-
-    for agent in agents:
-        agent["is_selected"] = bool(
-            selected_assistant_id and str(agent.get("assistant_id") or "") == selected_assistant_id
-        )
+        agents.append({
+            "role": role,
+            "configured_name": configured_name or "(not configured)",
+            "configured_version": configured_version or "(none)",
+            "env_name_key": ea["env_name_key"],
+            "env_version_key": ea["env_version_key"],
+            "assistant_id": remote["assistant_id"] if remote else "",
+            "system_prompt": remote["system_prompt"] if remote else "",
+            "model": remote.get("model", "") if remote else "",
+            "created_at": remote.get("created_at", "") if remote else "",
+            "status": status,
+            "endpoint": endpoint,
+        })
 
     return {
         "agents": agents,
-        "error": None,
-        "selected_assistant_id": selected_assistant_id,
-        "selected_agent_name": selected_agent_name,
-        "configured_assistant_id": configured_assistant_id,
-        "configured_agent_name": configured_agent_name,
+        "error": fetch_error,
+        "expected_names": sorted(expected_names),
+        "remote_agent_count": len(all_remote),
     }
 
 
 def _render_foundry_agents_page(snapshot: dict[str, Any]) -> None:
-    st.subheader("Foundry Agents")
+    st.subheader("System Agents")
     error = snapshot.get("error")
-    if isinstance(error, str) and error.strip():
-        st.error(f"Unable to fetch agents: {error}")
-        return
-
     agents = snapshot.get("agents", [])
-    if not isinstance(agents, list) or not agents:
-        st.info("No Foundry agents were returned by the configured endpoint.")
-        return
+    remote_count = snapshot.get("remote_agent_count", 0)
 
-    configured_assistant_id = str(snapshot.get("configured_assistant_id", "") or "")
-    configured_agent_name = str(snapshot.get("configured_agent_name", "") or "")
-    selected_assistant_id = str(snapshot.get("selected_assistant_id", "") or "")
-    selected_agent_name = str(snapshot.get("selected_agent_name", "") or "")
+    if isinstance(error, str) and error.strip():
+        st.warning(f"Could not query Foundry: {error}")
+        st.caption("Showing local configuration only (remote status unavailable).")
 
-    st.markdown("**Configured Selection (from env)**")
-    st.write(
-        {
-            "FOUNDRY_ASSISTANT_ID": configured_assistant_id or "(not set)",
-            "FOUNDRY_AGENT_NAME": configured_agent_name or "(not set)",
-        }
+    st.caption(
+        f"Showing {len(agents)} expected system agent(s). "
+        f"{remote_count} total agent(s) exist in the Foundry project."
     )
 
-    if selected_assistant_id:
-        st.success(
-            f"Using assistant ID {selected_assistant_id}"
-            + (f" ({selected_agent_name})" if selected_agent_name else "")
-            + "."
-        )
-    else:
-        st.warning("No unique configured assistant could be resolved from current env values.")
-
-    duplicates_by_name: dict[str, int] = {}
     for agent in agents:
-        name = str(agent.get("agent_name", "Unknown"))
-        duplicates_by_name[name] = duplicates_by_name.get(name, 0) + 1
+        role = agent.get("role", "Agent")
+        configured_name = agent.get("configured_name", "")
+        configured_version = agent.get("configured_version", "")
+        status = agent.get("status", "unknown")
+        assistant_id = agent.get("assistant_id", "")
+        model = agent.get("model", "")
+        system_prompt = agent.get("system_prompt", "")
+        env_name_key = agent.get("env_name_key", "")
+        env_version_key = agent.get("env_version_key", "")
 
-    duplicate_names = [name for name, count in duplicates_by_name.items() if count > 1]
-    if duplicate_names:
-        st.info("Duplicate assistant names detected: " + ", ".join(sorted(duplicate_names)))
+        # Status badge
+        if status == "connected":
+            icon = "\u2705"
+            status_label = "Connected"
+        elif status == "not_found":
+            icon = "\u274c"
+            status_label = "Not Found in Foundry"
+        else:
+            icon = "\u26a0\ufe0f"
+            status_label = "Fetch Error"
 
-    for agent in agents:
-        name = str(agent.get("agent_name", "Unknown"))
-        assistant_id = str(agent.get("assistant_id", ""))
-        endpoint = str(agent.get("endpoint", ""))
-        system_prompt = str(agent.get("system_prompt", ""))
-        is_selected = bool(agent.get("is_selected", False))
+        header = f"{icon} **{role}** — `{configured_name}` v{configured_version}"
+        with st.expander(header, expanded=(status == "connected")):
+            col_a, col_b, col_c = st.columns(3)
+            col_a.metric("Status", status_label)
+            col_b.metric("Version", configured_version or "—")
+            col_c.metric("Model", model or "—")
 
-        label = f"{name} [{assistant_id}]" if assistant_id else name
-        if is_selected:
-            label = f"✅ {label}"
+            st.markdown("**Configuration**")
+            st.code(
+                f"{env_name_key}={configured_name}\n{env_version_key}={configured_version}",
+                language="ini",
+            )
 
-        with st.expander(label, expanded=is_selected):
-            st.write(f"Assistant ID: {assistant_id or '(missing)'}")
-            st.write(f"Endpoint: {endpoint}")
-            st.markdown("**System Prompt**")
-            st.code(system_prompt or "(empty)", language="text")
+            if assistant_id:
+                st.caption(f"Assistant ID: `{assistant_id}`")
+
+            if system_prompt:
+                prompt_preview = system_prompt[:300] + ("…" if len(system_prompt) > 300 else "")
+                st.markdown("**System Prompt** (preview)")
+                st.text(prompt_preview)
+                with st.expander("Full System Prompt"):
+                    st.code(system_prompt, language="text")
 
 
 def _discover_pipeline_dirs() -> list[Path]:
@@ -351,6 +410,222 @@ def _render_overview(entry: dict[str, Any]) -> None:
     col5.metric("Warnings", int(entry["warnings"]))
 
 
+def _approve_schema_cache_entry(lookup: dict[str, Any]) -> tuple[bool, str]:
+    fingerprint = str(lookup.get("schema_fingerprint_sha256", "")).strip()
+    if not fingerprint:
+        return False, "Schema fingerprint is missing in lookup payload."
+
+    matched_entry_path = str(lookup.get("matched_entry_path", "")).strip()
+    cache_root = str(lookup.get("cache_root", "")).strip()
+
+    if matched_entry_path:
+        entry_path = Path(matched_entry_path)
+    elif cache_root:
+        entry_path = Path(cache_root) / "entries" / f"{fingerprint}.json"
+    else:
+        entry_path = WORKSPACE_ROOT / "artifacts" / "schema_cache" / "entries" / f"{fingerprint}.json"
+
+    if not entry_path.exists():
+        return False, f"Schema cache entry not found: {entry_path}"
+
+    try:
+        payload = json.loads(entry_path.read_text(encoding="utf-8"))
+    except Exception as error:
+        return False, f"Unable to read cache entry: {error}"
+
+    approved_at = datetime.utcnow().isoformat() + "Z"
+    payload["approval_status"] = "approved"
+    payload["approval_source"] = "human_ui"
+    payload["auto_approve_enabled"] = True
+    payload["last_seen_at"] = approved_at
+    metadata = payload.get("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata["approved_at"] = approved_at
+    metadata["approved_via"] = "streamlit_ui"
+    payload["metadata"] = metadata
+
+    try:
+        entry_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception as error:
+        return False, f"Unable to write cache entry: {error}"
+
+    return True, str(entry_path)
+
+
+def _render_schema_lookup(run_dir: Path) -> None:
+    st.subheader("Schema Lookup")
+    lookup = _read_json(run_dir / "schema_cache_lookup.json")
+
+    if lookup is None:
+        st.warning("schema_cache_lookup.json not found or unreadable.")
+        return
+
+    lookup_status = str(lookup.get("lookup_status", "unknown"))
+    match_found = bool(lookup.get("match_found", False))
+    cache_hit_approved = bool(lookup.get("cache_hit_approved", False))
+    planning_source = str(lookup.get("planning_source", "unknown"))
+    approval_status = str(lookup.get("matched_entry_approval_status") or "")
+    fingerprint = str(lookup.get("schema_fingerprint_sha256", "")).strip()
+
+    matched_entry_path = str(lookup.get("matched_entry_path", "")).strip()
+    cache_root = str(lookup.get("cache_root", "")).strip()
+    if matched_entry_path:
+        entry_path = Path(matched_entry_path)
+    elif cache_root and fingerprint:
+        entry_path = Path(cache_root) / "entries" / f"{fingerprint}.json"
+    elif fingerprint:
+        entry_path = WORKSPACE_ROOT / "artifacts" / "schema_cache" / "entries" / f"{fingerprint}.json"
+    else:
+        entry_path = None
+
+    current_entry_approval_status = ""
+    if entry_path is not None and entry_path.exists():
+        try:
+            current_entry_payload = json.loads(entry_path.read_text(encoding="utf-8"))
+            current_entry_approval_status = str(current_entry_payload.get("approval_status") or "")
+        except Exception:
+            current_entry_approval_status = ""
+
+    effective_approval_status = current_entry_approval_status or approval_status
+    approval_button_available = bool(entry_path is not None and entry_path.exists() and effective_approval_status != "approved")
+
+    label_map = {
+        "known_input_schema": "Known input schema",
+        "known_input_schema_unapproved": "Known input schema (unapproved)",
+        "not_found": "Not found",
+    }
+    display_status = label_map.get(lookup_status, lookup_status)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Lookup Result", display_status)
+    c2.metric("Match Found", "Yes" if match_found else "No")
+    c3.metric("Planning Source", planning_source)
+    c4.metric("Approval", effective_approval_status or "N/A")
+
+    if lookup_status == "known_input_schema":
+        st.success("Known input schema found. Cached planner output was used.")
+    elif lookup_status == "known_input_schema_unapproved":
+        st.info("Known schema signature found, but it is not approved yet. Planner was executed.")
+    elif lookup_status == "not_found":
+        st.info("No known input schema match was found. Planner was executed.")
+
+    if approval_button_available:
+        if st.button(
+            "Approve this schema for cache reuse",
+            type="primary",
+            key=f"approve-schema-{fingerprint or run_dir.name}",
+        ):
+            ok, detail = _approve_schema_cache_entry(lookup)
+            if ok:
+                st.success(f"Schema approved. Cache entry updated at: {detail}")
+                st.rerun()
+            else:
+                st.error(detail)
+    elif effective_approval_status == "approved":
+        st.success("This schema is approved for cache reuse.")
+    elif not match_found:
+        st.caption("No matched cache entry was recorded at lookup time for this run.")
+        if entry_path is not None and entry_path.exists():
+            st.info("A draft cache entry now exists for this fingerprint, but the run snapshot still shows not_found.")
+
+    st.caption("Schema fingerprint")
+    st.code(str(lookup.get("schema_fingerprint_sha256", "")), language="text")
+
+    with st.expander("Lookup details", expanded=False):
+        st.json(lookup)
+
+
+def _render_output_notes(run_dir: Path) -> None:
+    """Render the notes list from notes.json (excludes post-processing details)."""
+    st.subheader("Output Notes")
+    notes_path = run_dir / "notes.json"
+    if not notes_path.exists():
+        st.caption("notes.json not found for this run.")
+        return
+
+    notes_data = _read_json(notes_path)
+    if not notes_data:
+        st.caption("notes.json is empty.")
+        return
+
+    total = notes_data.get("total_notes", 0)
+    planner_count = notes_data.get("planner_note_count", 0)
+    transform_count = notes_data.get("transform_note_count", 0)
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Notes", total)
+    col2.metric("Planner Notes", planner_count)
+    col3.metric("Transform Notes", transform_count)
+
+    notes_list = notes_data.get("notes", [])
+    if notes_list:
+        severity_order = {"critical": 0, "warning": 1, "info": 2}
+        sorted_notes = sorted(notes_list, key=lambda n: severity_order.get(n.get("severity", "info"), 99))
+
+        for note in sorted_notes:
+            severity = note.get("severity", "info")
+            category = note.get("category", "general")
+            origin = note.get("origin", "")
+            text = note.get("note", "")
+            icon = {"critical": "\u274c", "warning": "\u26a0\ufe0f", "info": "\u2139\ufe0f"}.get(severity, "\u2139\ufe0f")
+            badge = f"`{category}`" + (f" | `{origin}`" if origin else "")
+            st.markdown(f"{icon} {badge} — {text}")
+
+        with st.expander("Raw notes.json"):
+            st.json(notes_data)
+    else:
+        st.info("No notes were generated for this run.")
+
+
+def _render_postprocessing(run_dir: Path) -> None:
+    """Render post-processing change log and postprocess report."""
+    st.subheader("Post-Processing")
+
+    notes_path = run_dir / "notes.json"
+    notes_data = _read_json(notes_path) if notes_path.exists() else {}
+    change_log_data = (notes_data or {}).get("post_process_change_log", {})
+    change_count = change_log_data.get("total_updates", 0)
+
+    st.metric("Post-Process Field Updates", change_count)
+
+    # ── Post-Process Change Log ───────────────────────────────────
+    if change_count > 0:
+        fields_updated = change_log_data.get("fields_updated", [])
+        st.caption(f"{change_count} field updates across {len(fields_updated)} field types: {', '.join(fields_updated)}")
+
+        changes = change_log_data.get("changes", [])
+
+        # Summary table
+        change_rows = []
+        for c in changes:
+            change_rows.append({
+                "Lane ID": c.get("lane_id", ""),
+                "Row": c.get("row_index", ""),
+                "Field": c.get("field", ""),
+                "Old Value": str(c.get("old_value")) if c.get("old_value") is not None else "(empty)",
+                "New Value": str(c.get("new_value", "")),
+                "Reason": c.get("reason", ""),
+            })
+        if change_rows:
+            st.dataframe(pd.DataFrame(change_rows), use_container_width=True, height=min(400, 35 * len(change_rows) + 38))
+
+        with st.expander("Raw change log JSON"):
+            st.json(change_log_data)
+    else:
+        st.info("No post-process field updates were applied for this run.")
+
+    # ── Also show the postprocess_report.json if present ──────────
+    postprocess_report_path = run_dir / "postprocess_report.json"
+    if postprocess_report_path.exists():
+        report = _read_json(postprocess_report_path)
+        if report:
+            with st.expander("Post-Process Report (postprocess_report.json)"):
+                st.json(report)
+    elif change_count == 0:
+        st.caption("No postprocess_report.json found for this run.")
+
+
 def _render_final_results(run_dir: Path) -> None:
     st.subheader("Canonical Output")
     csv_path = run_dir / "canonical_output.csv"
@@ -374,11 +649,31 @@ def _render_final_results(run_dir: Path) -> None:
     if xlsx_path.exists():
         st.caption(f"XLSX path: {xlsx_path}")
 
+    # ── Per-row Notes JSON breakdown ──────────────────────────────
+    if "Notes JSON" in dataframe.columns:
+        notes_col = dataframe["Notes JSON"].dropna().astype(str)
+        non_empty = notes_col[notes_col.str.strip() != "[]"]
+        st.markdown(f"**Per-Row Notes:** {len(non_empty)} of {len(dataframe)} rows have notes")
+
+        if len(non_empty) > 0:
+            with st.expander(f"Show rows with notes ({len(non_empty)})", expanded=False):
+                for idx, raw_json in non_empty.items():
+                    try:
+                        notes_list = json.loads(raw_json)
+                    except Exception:
+                        notes_list = []
+                    if not notes_list:
+                        continue
+                    lane_id = dataframe.at[idx, "Customer Lane ID"] if "Customer Lane ID" in dataframe.columns else f"Row {idx}"
+                    items = ", ".join(f"**{n.get('field', '?')}**: {n.get('value', '')}" for n in notes_list)
+                    st.markdown(f"- `{lane_id}` — {items}")
+
 
 def _render_planner_output(run_dir: Path) -> None:
     st.subheader("Planner Output")
     planner_path = run_dir / "planner_response.json"
     planner = _read_json(planner_path)
+    note_detection = _read_json(run_dir / "note_field_detection.json")
 
     if planner is None:
         st.warning("planner_response.json not found or unreadable.")
@@ -405,6 +700,20 @@ def _render_planner_output(run_dir: Path) -> None:
     script = planner.get("python_script", "")
     st.markdown("**Generated Transform Script**")
     st.code(script, language="python")
+
+    st.markdown("**Identified Note Fields**")
+    if isinstance(note_detection, dict):
+        note_candidates = note_detection.get("note_field_candidates", [])
+        canonical_note_fields = note_detection.get("canonical_note_fields", [])
+        st.write("Canonical note fields")
+        st.json(canonical_note_fields)
+        st.write("Detected source note-like columns")
+        if isinstance(note_candidates, list) and note_candidates:
+            st.json(note_candidates)
+        else:
+            st.caption("No note-like source columns detected for this run.")
+    else:
+        st.caption("note_field_detection.json not found for this run.")
 
 
 def _render_validation(run_dir: Path) -> None:
@@ -466,17 +775,23 @@ def _render_run_details(entry: dict[str, Any]) -> None:
     run_dir = entry["run_dir"]
     _render_overview(entry)
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["Final Results", "Planner Output", "Validation", "Execution Logs"]
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+        ["Output Planner", "Output Notes", "Post-Processing", "Final Results", "Schema Lookup", "Validation", "Execution Logs"]
     )
 
     with tab1:
-        _render_final_results(run_dir)
-    with tab2:
         _render_planner_output(run_dir)
+    with tab2:
+        _render_output_notes(run_dir)
     with tab3:
-        _render_validation(run_dir)
+        _render_postprocessing(run_dir)
     with tab4:
+        _render_final_results(run_dir)
+    with tab5:
+        _render_schema_lookup(run_dir)
+    with tab6:
+        _render_validation(run_dir)
+    with tab7:
         _render_execution_logs(run_dir)
 
 
@@ -484,16 +799,41 @@ def _create_new_run() -> dict[str, Any] | None:
     st.subheader("Create New Run")
 
     example_inputs = sorted(EXAMPLE_INPUTS_DIR.glob("*.xlsx"))
+
+    # ── File upload ───────────────────────────────────────────────
+    uploaded_file = st.file_uploader(
+        "Upload a new workbook (will be saved to examples/inputs)",
+        type=["xlsx", "xls"],
+        key="upload_input_workbook",
+    )
+    if uploaded_file is not None:
+        dest = EXAMPLE_INPUTS_DIR / uploaded_file.name
+        if not dest.exists() or st.checkbox(f"Overwrite existing {uploaded_file.name}?", value=False):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(uploaded_file.getvalue())
+            st.success(f"Saved to {dest}")
+            # Refresh the list so the new file shows up
+            example_inputs = sorted(EXAMPLE_INPUTS_DIR.glob("*.xlsx"))
+
     if not example_inputs:
         st.error("No example inputs found under examples/inputs.")
         return None
 
-    selected_input = st.selectbox("Input workbook", options=example_inputs, format_func=lambda path: path.name)
+    # ── Pre-select uploaded file if it was just added ─────────────
+    default_idx = 0
+    if uploaded_file is not None:
+        target = EXAMPLE_INPUTS_DIR / uploaded_file.name
+        for i, p in enumerate(example_inputs):
+            if p.name == target.name:
+                default_idx = i
+                break
+
+    selected_input = st.selectbox("Input workbook", options=example_inputs, index=default_idx, format_func=lambda path: path.name)
     run_mode = st.selectbox("Run mode", options=["execute_with_validation", "draft"])
     planner_mode = st.selectbox("Planner mode", options=["live", "mock"])
     run_target = st.selectbox(
         "Run target",
-        options=["Direct pipeline (local artifacts)", "Blob trigger (emulator input/output containers)"],
+        options=["Blob trigger (input/output containers)", "Direct pipeline (local artifacts)"],
     )
 
     if planner_mode == "live":
@@ -587,7 +927,7 @@ def main() -> None:
             st.session_state["mode"] = "Browse Prior Runs"
         mode = st.radio(
             "Mode",
-            options=["Browse Prior Runs", "Create New Run", "Foundry Agents"],
+            options=["Browse Prior Runs", "Create New Run", "System Agents"],
             key="mode",
         )
         refresh = st.button("Refresh Run Index")
@@ -609,7 +949,7 @@ def main() -> None:
                 st.warning(f"Run created at {run_dir} but not found in discovery index yet.")
         return
 
-    if mode == "Foundry Agents":
+    if mode == "System Agents":
         _render_foundry_agents_page(foundry_agents_snapshot)
         return
 

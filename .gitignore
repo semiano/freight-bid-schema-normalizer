@@ -22,7 +22,6 @@ venv/
 # Function local/runtime artifacts
 local.settings.json
 .azure-functions/
-.copilot/
 
 # Azurite/artifacts
 .azurite/

@@ -50,6 +50,22 @@ This repository implements an AI-driven Excel schema standardization platform fo
 - Detailed startup and troubleshooting guide:
   - [.copilot/startup_procedure.md](.copilot/startup_procedure.md)
 
+## Schema Lookup Backfill (Historical Runs)
+
+- Command: `python scripts/backfill-schema-lookup.py`
+- Purpose: backfills `schema_cache_lookup.json` for discovered historical `pipeline_*` run folders.
+- Behavior:
+  - Uses existing `schema_fingerprint.json` when present.
+  - Rebuilds fingerprints from `workbook_profile.json` when possible.
+  - Writes fallback `not_found` lookup records for legacy runs missing both artifacts.
+- Optional flag: `--skip-fallback` to avoid writing fallback lookup files for runs with insufficient inputs.
+
+## Approve Known Schema Signature
+
+- Command by fingerprint: `python scripts/approve-schema-cache-entry.py --fingerprint <sha256>`
+- Command by run directory: `python scripts/approve-schema-cache-entry.py --run-dir "artifacts/local_pipeline/pipeline_<runid>"`
+- Result: sets schema cache entry `approval_status=approved` so exact matches can reuse cached planner output.
+
 ## Preliminary Localhost Smoke Run
 
 - Command: `python -m src.function_app.local_smoke_runner --input "examples/inputs/Input 8.xlsx" --output-root "artifacts/local_smoke"`

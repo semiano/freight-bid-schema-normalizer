@@ -4,6 +4,9 @@ param principalId string
 @description('Optional worker principal ID receiving additional roles when enabled.')
 param workerPrincipalId string = ''
 
+@description('Optional Web App principal ID for Streamlit UI identity.')
+param webAppPrincipalId string = ''
+
 @description('Storage account name in current resource group.')
 param storageAccountName string
 
@@ -22,12 +25,29 @@ param assignWorkerRoles bool = false
 @description('Whether Foundry roles should be granted to workerPrincipalId.')
 param assignWorkerFoundryRoles bool = false
 
+@description('Whether storage/Foundry roles should be granted to the Web App identity.')
+param assignWebAppRoles bool = false
+
+@description('Whether Foundry roles should be granted to the Web App identity.')
+param assignWebAppFoundryRoles bool = false
+
+@description('Optional Streamlit Container App principal ID for managed identity.')
+param streamlitAppPrincipalId string = ''
+
+@description('Whether storage roles should be granted to the Streamlit Container App identity.')
+param assignStreamlitAppRoles bool = false
+
+@description('Whether Foundry roles should be granted to the Streamlit Container App identity.')
+param assignStreamlitAppFoundryRoles bool = false
+
 @description('Foundry account name in current resource group.')
 param foundryAccountName string = ''
 
 @description('Foundry project name under the account.')
 param foundryProjectName string = ''
 
+// FC1 Flex Consumption requires Storage Blob Data Owner for deployment; Owner is a superset of Contributor.
+var storageBlobDataOwnerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
 var storageBlobDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 var storageQueueDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
 var keyVaultSecretsUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
@@ -35,6 +55,11 @@ var openAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefin
 var azureAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')
 var shouldAssignWorkerRoles = assignWorkerRoles && !empty(workerPrincipalId)
 var shouldAssignWorkerFoundryRoles = assignWorkerFoundryRoles && !empty(workerPrincipalId)
+var shouldAssignWebAppRoles = assignWebAppRoles && !empty(webAppPrincipalId)
+var shouldAssignWebAppFoundryRoles = assignWebAppFoundryRoles && !empty(webAppPrincipalId)
+var shouldAssignStreamlitAppRoles = assignStreamlitAppRoles && !empty(streamlitAppPrincipalId)
+var shouldAssignStreamlitAppFoundryRoles = assignStreamlitAppFoundryRoles && !empty(streamlitAppPrincipalId)
+var storageBlobDataReaderRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: storageAccountName
@@ -54,10 +79,10 @@ resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-0
 }
 
 resource storageBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, principalId, storageBlobDataContributorRoleId)
+  name: guid(storageAccount.id, principalId, storageBlobDataOwnerRoleId)
   scope: storageAccount
   properties: {
-    roleDefinitionId: storageBlobDataContributorRoleId
+    roleDefinitionId: storageBlobDataOwnerRoleId
     principalId: principalId
     principalType: 'ServicePrincipal'
   }
@@ -149,6 +174,70 @@ resource workerFoundryProjectRole 'Microsoft.Authorization/roleAssignments@2022-
   properties: {
     roleDefinitionId: azureAiUserRoleId
     principalId: workerPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ── Web App roles (Streamlit UI) ──
+
+resource webAppStorageBlobReaderRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (shouldAssignWebAppRoles) {
+  name: guid(storageAccount.id, webAppPrincipalId, storageBlobDataReaderRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: storageBlobDataReaderRoleId
+    principalId: webAppPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource webAppFoundryAccountRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (shouldAssignWebAppFoundryRoles && !empty(foundryAccountName)) {
+  name: guid(foundryAccount.id, webAppPrincipalId, openAiUserRoleId)
+  scope: foundryAccount
+  properties: {
+    roleDefinitionId: openAiUserRoleId
+    principalId: webAppPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource webAppFoundryProjectRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (shouldAssignWebAppFoundryRoles && !empty(foundryAccountName) && !empty(foundryProjectName)) {
+  name: guid(foundryProject.id, webAppPrincipalId, azureAiUserRoleId)
+  scope: foundryProject
+  properties: {
+    roleDefinitionId: azureAiUserRoleId
+    principalId: webAppPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ── Streamlit Container App roles ──
+
+resource streamlitStorageBlobContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (shouldAssignStreamlitAppRoles) {
+  name: guid(storageAccount.id, streamlitAppPrincipalId, storageBlobDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: storageBlobDataContributorRoleId
+    principalId: streamlitAppPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource streamlitFoundryAccountRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (shouldAssignStreamlitAppFoundryRoles && !empty(foundryAccountName)) {
+  name: guid(foundryAccount.id, streamlitAppPrincipalId, openAiUserRoleId)
+  scope: foundryAccount
+  properties: {
+    roleDefinitionId: openAiUserRoleId
+    principalId: streamlitAppPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource streamlitFoundryProjectRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (shouldAssignStreamlitAppFoundryRoles && !empty(foundryAccountName) && !empty(foundryProjectName)) {
+  name: guid(foundryProject.id, streamlitAppPrincipalId, azureAiUserRoleId)
+  scope: foundryProject
+  properties: {
+    roleDefinitionId: azureAiUserRoleId
+    principalId: streamlitAppPrincipalId
     principalType: 'ServicePrincipal'
   }
 }

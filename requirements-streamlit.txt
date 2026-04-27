@@ -1,0 +1,6 @@
+streamlit>=1.38.0
+pandas>=2.2.0
+azure-identity>=1.17.0
+azure-storage-blob>=12.22.0
+azure-ai-projects>=1.0.0b7
+openpyxl>=3.1.0

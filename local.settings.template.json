@@ -10,7 +10,12 @@
     "FUNCTION_LOCAL_ARTIFACT_ROOT": "artifacts/function_runs",
     "PLANNER_MODE": "mock",
     "FOUNDRY_PROJECT_ENDPOINT": "",
-    "FOUNDRY_AGENT_NAME": "",
-    "FOUNDRY_API_KEY": ""
+    "FOUNDRY_AGENT_NAME": "RXO-Document-Normalizer",
+    "FOUNDRY_AGENT_VERSION": "5",
+    "FOUNDRY_API_KEY": "",
+    "FOUNDRY_ASSISTANT_ID": "",
+    "FOUNDRY_POSTPROCESS_AGENT_NAME": "RXO-Notes-PostProcessor",
+    "FOUNDRY_POSTPROCESS_AGENT_VERSION": "1",
+    "POSTPROCESS_MODE": "mock"
   }
 }

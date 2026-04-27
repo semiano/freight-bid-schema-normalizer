@@ -1,0 +1,167 @@
+# RXO Document Normalizer Build TODO
+
+## Project status
+- Status: In progress
+- Current milestone: Real core pipeline execution path wired (planner->sandbox->canonical output)
+
+## Completed
+- [x] Reviewed `software_spec.md`
+- [x] Reviewed `implementation_plan.md`
+- [x] Created `.copilot/TODO.md`
+- [x] Created `.copilot/copilot_instructions.md`
+- [x] Updated `README.md` to reflect current repo state
+- [x] Reconciled repository baseline against docs (missing app scaffold identified)
+- [x] Created initial app scaffold under `src/function_app/`
+- [x] Added foundational contract models in `src/function_app/models/contracts.py`
+- [x] Added foundational enums in `src/function_app/models/enums.py`
+- [x] Added canonical schema file `canonical_schema.freight_bid_v1.json`
+- [x] Implemented first deterministic vertical slice: canonical schema loader in `services/template_loader.py`
+- [x] Added initial test harness `services/test_template_loader.py`
+- [x] Configured Python environment and installed `pydantic`
+- [x] Executed schema loader test harness successfully
+- [x] Added package markers (`__init__.py`) for `src/function_app` modules
+- [x] Implemented deterministic `sheet_classifier.py` heuristics
+- [x] Implemented deterministic `workbook_profiler.py` (header detection, samples, type inference, profiling)
+- [x] Added unit tests: `tests/test_sheet_classifier.py` and `tests/test_workbook_profiler.py`
+- [x] Installed `openpyxl` and added `requirements.txt`
+- [x] Updated `README.md` with actual implemented slices and test command
+- [x] Implemented deterministic `output_writer.py` for canonical CSV/XLSX output
+- [x] Added unit tests: `tests/test_output_writer.py`
+- [x] Verified integrated deterministic suite passes (8 tests)
+- [x] Implemented deterministic validation rules in `services/validation_rules.py`
+- [x] Implemented deterministic validation service in `services/validation_service.py`
+- [x] Added validation tests: `tests/test_validation_service.py`
+- [x] Verified integrated deterministic suite passes (12 tests)
+- [x] Added enum validation rules with deterministic allowed-value checks
+- [x] Added null-rate threshold warning rules with configurable thresholds
+- [x] Added cross-field consistency warning rules for city/country pairing
+- [x] Expanded validation unit tests to cover new deterministic checks
+- [x] Verified integrated deterministic suite passes (15 tests)
+- [x] Added deterministic normalization helpers in `services/normalization_service.py`
+- [x] Integrated normalization into canonical writer path for country/bool/string handling
+- [x] Added optional lineage summary hooks in `validate_canonical_records`
+- [x] Added unit tests for normalization and lineage behavior
+- [x] Verified integrated deterministic suite passes (22 tests)
+- [x] Added formal `tests/test_template_loader.py`
+- [x] Retired ad-hoc `services/test_template_loader.py` harness
+- [x] Added `src/function_app/local_smoke_runner.py` for deterministic localhost smoke flow
+- [x] Executed smoke flow on `examples/inputs/Input 8.xlsx` and generated artifacts
+- [x] Verified expanded deterministic suite passes (24 tests)
+- [x] Added root Function App entrypoint `function_app.py` with Blob Trigger (`ProcessWorkbookBlob`)
+- [x] Added Function runtime config files (`host.json`, `local.settings.template.json`)
+- [x] Wired blob-trigger outputs for canonical CSV and validation report
+- [x] Fixed blob-trigger runtime issues discovered in local execution (`name` binding mismatch, workbook file-handle cleanup, logger usage)
+- [x] Started Azurite + Function host locally and validated blob-trigger processing path
+- [x] Verified output blobs are produced in local storage emulator (`*.canonical.csv`, `*.validation.json`)
+- [x] Added planner prompt assets in `src/function_app/prompts/`
+- [x] Added prompt rendering helper (`services/prompt_renderer.py`)
+- [x] Added Foundry agent client seam with mock/live modes (`services/foundry_agent_client.py`)
+- [x] Added planning service with AgentResponse contract validation (`services/planning_service.py`)
+- [x] Added planner tests (`tests/test_planning_service.py`)
+- [x] Verified integrated suite passes (26 tests)
+- [x] Added mode-aware pipeline orchestrator (`services/pipeline_runner.py`)
+- [x] Integrated `RUN_MODE` handling in blob-trigger Function App
+- [x] Added planner artifact blob output (`{name}.planner.json`)
+- [x] Added pipeline runner tests (`tests/test_pipeline_runner.py`)
+- [x] Verified integrated suite passes (28 tests)
+- [x] Added AST-based script policy checks (`services/script_policy.py`)
+- [x] Enforced script policy in pipeline before execution path
+- [x] Persisted policy report artifact (`script_policy_report.json`)
+- [x] Added script policy tests (`tests/test_script_policy.py`)
+- [x] Verified integrated suite passes (32 tests)
+- [x] Added sandbox executor (`services/sandbox_executor.py`) with timeout + structured report
+- [x] Integrated sandbox execution report artifact into pipeline (`sandbox_execution_report.json`)
+- [x] Added sandbox executor tests (`tests/test_sandbox_executor.py`)
+- [x] Updated pipeline tests for sandbox report behavior
+- [x] Verified integrated suite passes (35 tests)
+- [x] Added local artifact store adapter seam (`services/artifact_store.py`)
+- [x] Aligned pipeline outputs with `ExecutionResult` and persisted `execution_result.json`
+- [x] Added artifact store tests (`tests/test_artifact_store.py`)
+- [x] Updated pipeline tests for execution result artifact assertions
+- [x] Verified integrated suite passes (36 tests)
+- [x] Added `pyproject.toml` with packaging/lint/test baseline configuration
+- [x] Added `.gitignore` with Python/Azurite/Function local excludes
+- [x] Added blob-backed artifact store adapter seam (`BlobArtifactStore`)
+- [x] Added optional local-to-blob artifact mirroring in pipeline via env configuration
+- [x] Added blob artifact adapter tests (`tests/test_artifact_store_blob.py`)
+- [x] Verified integrated suite passes (38 tests)
+- [x] Replaced smoke fallback in pipeline execution path with sandbox-produced records
+- [x] Added planner mode switching (`PLANNER_MODE`) across pipeline and Function App
+- [x] Hardened live Foundry response parsing and retry behavior in `FoundryAgentClient`
+- [x] Added local full pipeline runner (`src/function_app/local_pipeline_runner.py`)
+- [x] Executed real local core run against sample workbook (467 output rows with full artifact set)
+- [x] Updated remote Foundry agent system prompt to policy-compliant contract (`RXO-Document-Normalizer:3`)
+- [x] Added assistants/threads-runs live invocation path in client for project endpoints
+- [x] Verified end-to-end live pipeline success (`planner_mode=live`, 467 rows, validation `Passed`)
+
+## In progress
+- [ ] Add CI workflow baseline for lint + tests
+
+## Next up
+- [ ] Refine profiler heuristics and confidence scoring
+- [ ] Add planning-service contract tests for structured planner response schema
+- [ ] Add blob-trigger integration test strategy (likely mocked function context + sample blob)
+- [ ] Add deterministic validation thresholds configuration surface
+- [ ] Add CI workflow baseline for lint + tests
+- [ ] Add artifact lifecycle/retention policy handling for blob mode
+
+## Blockers
+- Live Foundry execution is blocked by endpoint/API compatibility in current provided value (`HTTP 400 API version not supported` after authenticated calls). Need the exact deployed Foundry chat/agent endpoint + supported API version for this project.
+
+## Decisions made
+- The software spec and implementation plan are the governing design documents.
+- `README.md` must describe the real current state of the repo, not future aspirations.
+- `./.copilot/TODO.md` is the persistent working memory for implementation progress.
+- Changes should be incremental and testable.
+- First vertical slice chosen: deterministic canonical schema loading/validation before agent integration.
+- Kept boundaries explicit: models/contracts separated from services and templates.
+- Adopted `pydantic` as the contract validation engine for Phase 1.
+- Chose deterministic heuristics for header detection and sheet classification before any LLM planner integration.
+- Normalized sheet names in tests (strip whitespace) due to source workbook tab naming inconsistencies.
+- Writer uses canonical-schema-driven column ordering and blanks missing source values deterministically.
+- Validation remains deterministic-first and returns machine-readable issues/metrics for auditability.
+- Null-rate and cross-field checks are implemented as warnings, while schema/type/required/enum violations remain errors.
+- Lineage is optional in validation output (`include_lineage`) to avoid forcing source-ID requirements during early deterministic slices.
+- Blob trigger now executes `run_pipeline` and supports `PLANNER_MODE` (`mock|live`).
+
+## Test results
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' src/function_app/services/test_template_loader.py`
+- Result: Passed (schema loaded and validated)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (4 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (8 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (12 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (15 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_normalization_service.py tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (22 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_template_loader.py tests/test_normalization_service.py tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (24 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m src.function_app.local_smoke_runner --input 'examples/inputs/Input 8.xlsx' --output-root 'artifacts/local_smoke'`
+- Result: Passed (artifacts written; validation status `Passed`, errors `0`)
+- Ran: `func start --verbose` with Azurite + blob upload to `input/Input8_smoketest_v3.xlsx`
+- Result: Trigger executed and produced expected output blobs in `output/` (`Input8_smoketest_v3.xlsx.canonical.csv`, `Input8_smoketest_v3.xlsx.validation.json`)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_planning_service.py tests/test_template_loader.py tests/test_normalization_service.py tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (26 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_pipeline_runner.py tests/test_planning_service.py tests/test_template_loader.py tests/test_normalization_service.py tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (28 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_script_policy.py tests/test_pipeline_runner.py tests/test_planning_service.py tests/test_template_loader.py tests/test_normalization_service.py tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (32 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_sandbox_executor.py tests/test_script_policy.py tests/test_pipeline_runner.py tests/test_planning_service.py tests/test_template_loader.py tests/test_normalization_service.py tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (35 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_artifact_store.py tests/test_sandbox_executor.py tests/test_script_policy.py tests/test_pipeline_runner.py tests/test_planning_service.py tests/test_template_loader.py tests/test_normalization_service.py tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (36 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_artifact_store.py tests/test_sandbox_executor.py tests/test_script_policy.py tests/test_pipeline_runner.py tests/test_planning_service.py tests/test_template_loader.py tests/test_normalization_service.py tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (36 tests) after packaging/tooling baseline additions
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m unittest tests/test_artifact_store_blob.py tests/test_artifact_store.py tests/test_sandbox_executor.py tests/test_script_policy.py tests/test_pipeline_runner.py tests/test_planning_service.py tests/test_template_loader.py tests/test_normalization_service.py tests/test_validation_service.py tests/test_output_writer.py tests/test_sheet_classifier.py tests/test_workbook_profiler.py`
+- Result: Passed (38 tests)
+- Ran: `& 'c:/Users/stephenmiano/RXO document normalizer/.venv/Scripts/python.exe' -m src.function_app.local_pipeline_runner --input "examples/inputs/Input 8.xlsx" --output-root "artifacts/local_pipeline" --run-mode execute_with_validation --planner-mode mock`
+- Result: Passed (real pipeline execution; 467 rows emitted with full planner/sandbox/validation artifacts)
+
+## Notes for next session
+- Start by reading the spec, implementation plan, TODO, and README.
+- Refresh this file at the beginning and end of each meaningful work session.
+- Record architecture decisions and blockers as they appear.
+- Next vertical slice: CI workflow baseline and deterministic validation configuration surface.

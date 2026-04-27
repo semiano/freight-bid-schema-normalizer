@@ -29,6 +29,30 @@ class WorkbookProfile(BaseModel):
     sheets: List[SheetProfile]
     notes: Optional[str]
 
+
+class SchemaFingerprint(BaseModel):
+    schema_fingerprint_sha256: str
+    schema_signature_payload: Dict[str, Any]
+
+
+class SchemaCacheEntry(BaseModel):
+    id: str
+    schema_fingerprint_sha256: str
+    schema_signature_payload: Dict[str, Any]
+    canonical_schema_name: str
+    planner_output: Dict[str, Any]
+    planner_output_hash: str
+    approval_status: str = "draft"
+    approval_source: Optional[str] = None
+    auto_approve_enabled: bool = False
+    first_seen_at: str
+    last_seen_at: str
+    use_count: int = 1
+    created_from_run_id: Optional[str] = None
+    last_used_run_id: Optional[str] = None
+    notes: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
 class CanonicalSchemaColumn(BaseModel):
     name: str
     dtype: str
@@ -53,6 +77,7 @@ class AgentResponse(BaseModel):
     confidence_scores: Dict[str, float]
     python_script: str
     tests: Optional[List[str]]
+    notes_json: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
 
 class ExecutionResult(BaseModel):
     status: str

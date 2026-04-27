@@ -37,10 +37,10 @@ param storageSkuName string = 'Standard_LRS'
 param workspaceRetentionInDays int = 30
 
 @description('Function plan SKU name.')
-param functionPlanSkuName string = 'Y1'
+param functionPlanSkuName string = 'FC1'
 
 @description('Function plan SKU tier.')
-param functionPlanSkuTier string = 'Dynamic'
+param functionPlanSkuTier string = 'FlexConsumption'
 
 @description('Function run mode.')
 @allowed([
@@ -63,7 +63,7 @@ param foundryProjectEndpoint string = ''
 param foundryAgentName string = 'RXO-Document-Normalizer'
 
 @description('Foundry agent version for New Foundry invocation.')
-param foundryAgentVersion string = '3'
+param foundryAgentVersion string = '5'
 
 @description('Foundry API version used by runtime.')
 param foundryApiVersion string = '2025-05-15-preview'
@@ -74,8 +74,47 @@ param foundryModel string = 'gpt-4.1'
 @description('Canonical schema template name.')
 param canonicalSchemaName string = 'freight_bid_v1'
 
+@description('Foundry post-process agent name.')
+param foundryPostProcessAgentName string = 'RXO-Notes-PostProcessor'
+
+@description('Foundry post-process agent version.')
+param foundryPostProcessAgentVersion string = '1'
+
+@description('Post-process mode (mock | live).')
+@allowed([
+  'mock'
+  'live'
+])
+param postprocessMode string = 'mock'
+
 @description('Optional preconfigured Foundry assistant ID (left empty for strict New Foundry agent_reference mode).')
 param foundryAssistantId string = ''
+
+@description('Deploy a Web App to host the Streamlit companion UI.')
+param enableWebApp bool = false
+
+@description('Web App plan SKU name (F1 Free avoids Basic VM quota).')
+param webAppPlanSkuName string = 'F1'
+
+@description('Web App plan SKU tier.')
+param webAppPlanSkuTier string = 'Free'
+
+@description('Deploy Streamlit as an Azure Container App (no VM quota needed).')
+param enableStreamlitContainerApp bool = true
+
+@description('ACR login server hosting the Streamlit image.')
+param acrLoginServer string = ''
+
+@description('ACR admin username.')
+@secure()
+param acrUsername string = ''
+
+@description('ACR admin password.')
+@secure()
+param acrPassword string = ''
+
+@description('Streamlit container image (repo:tag).')
+param streamlitContainerImage string = 'streamlit-ui:v1'
 
 @description('Optional Foundry account name in this resource group.')
 param foundryAccountName string = ''
@@ -175,7 +214,8 @@ module functionApp './modules/functionApp.bicep' = {
     environmentName: environmentName
     location: location
     planId: functionPlan.outputs.planId
-    storageConnectionString: storage.outputs.connectionString
+    storageAccountName: storage.outputs.storageAccountName
+    storageBlobEndpoint: storage.outputs.primaryBlobEndpoint
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     keyVaultUri: keyVault.outputs.keyVaultUri
     inputContainer: inputContainerName
@@ -190,11 +230,75 @@ module functionApp './modules/functionApp.bicep' = {
       FOUNDRY_API_VERSION: foundryApiVersion
       FOUNDRY_MODEL: foundryModel
       FOUNDRY_ASSISTANT_ID: foundryAssistantId
+      FOUNDRY_POSTPROCESS_AGENT_NAME: foundryPostProcessAgentName
+      FOUNDRY_POSTPROCESS_AGENT_VERSION: foundryPostProcessAgentVersion
+      POSTPROCESS_MODE: postprocessMode
       CANONICAL_SCHEMA_NAME: canonicalSchemaName
       AZURE_BLOB_API_VERSION: '2021-08-06'
       ENABLE_LLM_VALIDATION: 'false'
       MAX_SCRIPT_EXECUTION_SECONDS: '45'
       MAX_PROFILE_SAMPLE_ROWS: '25'
+    }
+    tags: tags
+  }
+}
+
+// ── Web App Plan (separate from Function consumption plan) ──
+module webAppPlan './modules/functionPlan.bicep' = if (enableWebApp) {
+  name: 'webappplan'
+  params: {
+    baseName: '${baseName}web'
+    environmentName: environmentName
+    location: location
+    skuName: webAppPlanSkuName
+    skuTier: webAppPlanSkuTier
+    planKind: 'linux'
+    tags: tags
+  }
+}
+
+// ── Streamlit Web App ──
+module webApp './modules/webApp.bicep' = if (enableWebApp) {
+  name: 'webapp'
+  params: {
+    baseName: baseName
+    environmentName: environmentName
+    location: location
+    planId: webAppPlan.?outputs.?planId ?? ''
+    storageAccountName: storage.outputs.storageAccountName
+    appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    foundryProjectEndpoint: foundryProjectEndpoint
+    functionAppHostname: functionApp.outputs.functionAppName
+    tags: tags
+  }
+}
+
+// ── Streamlit Container App (no VM quota needed) ──
+module streamlitApp './modules/streamlitApp.bicep' = if (enableStreamlitContainerApp) {
+  name: 'streamlitapp'
+  params: {
+    enabled: enableStreamlitContainerApp
+    namePrefix: '${baseName}-streamlit-${environmentName}'
+    location: location
+    acrLoginServer: acrLoginServer
+    acrUsername: acrUsername
+    acrPassword: acrPassword
+    containerImage: streamlitContainerImage
+    storageAccountName: storage.outputs.storageAccountName
+    foundryProjectEndpoint: foundryProjectEndpoint
+    functionAppHostname: functionApp.outputs.functionAppName
+    inputContainer: inputContainerName
+    outputContainer: outputContainerName
+    additionalEnvVars: {
+      PLANNER_MODE: plannerMode
+      RUN_MODE: runMode
+      FOUNDRY_AGENT_NAME: foundryAgentName
+      FOUNDRY_AGENT_VERSION: foundryAgentVersion
+      FOUNDRY_API_VERSION: foundryApiVersion
+      FOUNDRY_ASSISTANT_ID: foundryAssistantId
+      FOUNDRY_POSTPROCESS_AGENT_NAME: foundryPostProcessAgentName
+      FOUNDRY_POSTPROCESS_AGENT_VERSION: foundryPostProcessAgentVersion
+      POSTPROCESS_MODE: postprocessMode
     }
     tags: tags
   }
@@ -219,12 +323,18 @@ module roles './modules/roles.bicep' = {
   params: {
     principalId: functionApp.outputs.principalId
     workerPrincipalId: containerWorker.outputs.workerPrincipalId
+    webAppPrincipalId: webApp.?outputs.?principalId ?? ''
+    streamlitAppPrincipalId: streamlitApp.?outputs.?streamlitPrincipalId ?? ''
     storageAccountName: storage.outputs.storageAccountName
     keyVaultName: keyVault.outputs.keyVaultName
     grantQueueRole: createQueues
     assignFoundryRoles: assignFoundryRoles
     assignWorkerRoles: assignContainerWorkerRoles
     assignWorkerFoundryRoles: assignContainerWorkerFoundryRoles
+    assignWebAppRoles: enableWebApp
+    assignWebAppFoundryRoles: enableWebApp && assignFoundryRoles
+    assignStreamlitAppRoles: enableStreamlitContainerApp
+    assignStreamlitAppFoundryRoles: enableStreamlitContainerApp && assignFoundryRoles
     foundryAccountName: foundryAccountName
     foundryProjectName: foundryProjectName
   }
@@ -257,3 +367,9 @@ output foundryProjectResourceId string = createFoundryProject ? foundryProject.i
 output containerWorkerJobResourceId string = containerWorker.outputs.workerJobResourceId
 output containerWorkerManagedEnvironmentId string = containerWorker.outputs.workerManagedEnvironmentId
 output containerWorkerPrincipalId string = containerWorker.outputs.workerPrincipalId
+output webAppName string = webApp.?outputs.?webAppName ?? ''
+output webAppDefaultHostname string = webApp.?outputs.?defaultHostname ?? ''
+output webAppPrincipalId string = webApp.?outputs.?principalId ?? ''
+output streamlitAppName string = streamlitApp.?outputs.?streamlitAppName ?? ''
+output streamlitFqdn string = streamlitApp.?outputs.?streamlitFqdn ?? ''
+output streamlitPrincipalId string = streamlitApp.?outputs.?streamlitPrincipalId ?? ''

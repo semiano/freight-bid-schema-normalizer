@@ -1,0 +1,335 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.40.2.10011",
+      "templateHash": "9875514364806719135"
+    }
+  },
+  "parameters": {
+    "principalId": {
+      "type": "string",
+      "metadata": {
+        "description": "Principal ID of the managed identity receiving roles."
+      }
+    },
+    "workerPrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional worker principal ID receiving additional roles when enabled."
+      }
+    },
+    "webAppPrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Web App principal ID for Streamlit UI identity."
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Storage account name in current resource group."
+      }
+    },
+    "keyVaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "Key vault name in current resource group."
+      }
+    },
+    "grantQueueRole": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Whether queue data contributor role should be granted."
+      }
+    },
+    "assignFoundryRoles": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Assign Foundry roles on account/project in this resource group."
+      }
+    },
+    "assignWorkerRoles": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Whether storage/key vault (and optional queue) roles should be granted to workerPrincipalId."
+      }
+    },
+    "assignWorkerFoundryRoles": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Whether Foundry roles should be granted to workerPrincipalId."
+      }
+    },
+    "assignWebAppRoles": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Whether storage/Foundry roles should be granted to the Web App identity."
+      }
+    },
+    "assignWebAppFoundryRoles": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Whether Foundry roles should be granted to the Web App identity."
+      }
+    },
+    "streamlitAppPrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional Streamlit Container App principal ID for managed identity."
+      }
+    },
+    "assignStreamlitAppRoles": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Whether storage roles should be granted to the Streamlit Container App identity."
+      }
+    },
+    "assignStreamlitAppFoundryRoles": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Whether Foundry roles should be granted to the Streamlit Container App identity."
+      }
+    },
+    "foundryAccountName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Foundry account name in current resource group."
+      }
+    },
+    "foundryProjectName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Foundry project name under the account."
+      }
+    }
+  },
+  "variables": {
+    "storageBlobDataOwnerRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
+    "storageBlobDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+    "storageQueueDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
+    "keyVaultSecretsUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')]",
+    "openAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
+    "azureAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+    "shouldAssignWorkerRoles": "[and(parameters('assignWorkerRoles'), not(empty(parameters('workerPrincipalId'))))]",
+    "shouldAssignWorkerFoundryRoles": "[and(parameters('assignWorkerFoundryRoles'), not(empty(parameters('workerPrincipalId'))))]",
+    "shouldAssignWebAppRoles": "[and(parameters('assignWebAppRoles'), not(empty(parameters('webAppPrincipalId'))))]",
+    "shouldAssignWebAppFoundryRoles": "[and(parameters('assignWebAppFoundryRoles'), not(empty(parameters('webAppPrincipalId'))))]",
+    "shouldAssignStreamlitAppRoles": "[and(parameters('assignStreamlitAppRoles'), not(empty(parameters('streamlitAppPrincipalId'))))]",
+    "shouldAssignStreamlitAppFoundryRoles": "[and(parameters('assignStreamlitAppFoundryRoles'), not(empty(parameters('streamlitAppPrincipalId'))))]",
+    "storageBlobDataReaderRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('principalId'), variables('storageBlobDataOwnerRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageBlobDataOwnerRoleId')]",
+        "principalId": "[parameters('principalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[parameters('grantQueueRole')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('principalId'), variables('storageQueueDataContributorRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageQueueDataContributorRoleId')]",
+        "principalId": "[parameters('principalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), parameters('principalId'), variables('keyVaultSecretsUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('keyVaultSecretsUserRoleId')]",
+        "principalId": "[parameters('principalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[and(parameters('assignFoundryRoles'), not(empty(parameters('foundryAccountName'))))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), parameters('principalId'), variables('openAiUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('openAiUserRoleId')]",
+        "principalId": "[parameters('principalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[and(and(parameters('assignFoundryRoles'), not(empty(parameters('foundryAccountName')))), not(empty(parameters('foundryProjectName'))))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('foundryProjectName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('foundryProjectName')), parameters('principalId'), variables('azureAiUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('azureAiUserRoleId')]",
+        "principalId": "[parameters('principalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[variables('shouldAssignWorkerRoles')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('workerPrincipalId'), variables('storageBlobDataContributorRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageBlobDataContributorRoleId')]",
+        "principalId": "[parameters('workerPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[and(variables('shouldAssignWorkerRoles'), parameters('grantQueueRole'))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('workerPrincipalId'), variables('storageQueueDataContributorRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageQueueDataContributorRoleId')]",
+        "principalId": "[parameters('workerPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[variables('shouldAssignWorkerRoles')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), parameters('workerPrincipalId'), variables('keyVaultSecretsUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('keyVaultSecretsUserRoleId')]",
+        "principalId": "[parameters('workerPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[and(variables('shouldAssignWorkerFoundryRoles'), not(empty(parameters('foundryAccountName'))))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), parameters('workerPrincipalId'), variables('openAiUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('openAiUserRoleId')]",
+        "principalId": "[parameters('workerPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[and(and(variables('shouldAssignWorkerFoundryRoles'), not(empty(parameters('foundryAccountName')))), not(empty(parameters('foundryProjectName'))))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('foundryProjectName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('foundryProjectName')), parameters('workerPrincipalId'), variables('azureAiUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('azureAiUserRoleId')]",
+        "principalId": "[parameters('workerPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[variables('shouldAssignWebAppRoles')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('webAppPrincipalId'), variables('storageBlobDataReaderRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageBlobDataReaderRoleId')]",
+        "principalId": "[parameters('webAppPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[and(variables('shouldAssignWebAppFoundryRoles'), not(empty(parameters('foundryAccountName'))))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), parameters('webAppPrincipalId'), variables('openAiUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('openAiUserRoleId')]",
+        "principalId": "[parameters('webAppPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[and(and(variables('shouldAssignWebAppFoundryRoles'), not(empty(parameters('foundryAccountName')))), not(empty(parameters('foundryProjectName'))))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('foundryProjectName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('foundryProjectName')), parameters('webAppPrincipalId'), variables('azureAiUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('azureAiUserRoleId')]",
+        "principalId": "[parameters('webAppPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[variables('shouldAssignStreamlitAppRoles')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('streamlitAppPrincipalId'), variables('storageBlobDataContributorRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageBlobDataContributorRoleId')]",
+        "principalId": "[parameters('streamlitAppPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[and(variables('shouldAssignStreamlitAppFoundryRoles'), not(empty(parameters('foundryAccountName'))))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), parameters('streamlitAppPrincipalId'), variables('openAiUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('openAiUserRoleId')]",
+        "principalId": "[parameters('streamlitAppPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "condition": "[and(and(variables('shouldAssignStreamlitAppFoundryRoles'), not(empty(parameters('foundryAccountName')))), not(empty(parameters('foundryProjectName'))))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('foundryProjectName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('foundryProjectName')), parameters('streamlitAppPrincipalId'), variables('azureAiUserRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('azureAiUserRoleId')]",
+        "principalId": "[parameters('streamlitAppPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    }
+  ],
+  "outputs": {
+    "rolesAssigned": {
+      "type": "bool",
+      "value": true
+    }
+  }
+}

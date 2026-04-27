@@ -17,6 +17,9 @@ param containerNames array = [
   'artifacts'
 ]
 
+@description('Create a deployment-package container for Flex Consumption deployment.')
+param createDeploymentContainer bool = true
+
 @description('Whether queue resources should be created.')
 param createQueues bool = false
 
@@ -41,6 +44,13 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
     accessTier: 'Hot'
+    // Container Apps access blob storage over the public endpoint.
+    // Keep this Enabled until VNet integration + private endpoints are added.
+    publicNetworkAccess: 'Enabled'
+    networkAcls: {
+      defaultAction: 'Allow'
+      bypass: 'AzureServices'
+    }
   }
 }
 
@@ -56,6 +66,14 @@ resource blobContainers 'Microsoft.Storage/storageAccounts/blobServices/containe
     publicAccess: 'None'
   }
 }]
+
+resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (createDeploymentContainer) {
+  name: 'deploymentpackage'
+  parent: blobService
+  properties: {
+    publicAccess: 'None'
+  }
+}
 
 resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = if (createQueues) {
   name: 'default'

@@ -10,9 +10,11 @@ param location string
 @description('App Service plan resource ID.')
 param planId string
 
-@description('Storage connection string for AzureWebJobsStorage.')
-@secure()
-param storageConnectionString string
+@description('Storage account name for managed-identity based access.')
+param storageAccountName string
+
+@description('Storage account primary blob endpoint.')
+param storageBlobEndpoint string
 
 @description('Application Insights connection string.')
 param appInsightsConnectionString string
@@ -29,6 +31,15 @@ param outputContainer string = 'output'
 @description('Artifact blob container name.')
 param artifactContainer string = 'artifacts'
 
+@description('Blob container used by Flex Consumption for deployment packages.')
+param deploymentContainerName string = 'deploymentpackage'
+
+@description('Maximum instance count for Flex Consumption scale-out.')
+param maxInstanceCount int = 100
+
+@description('Memory in MB allocated per instance.')
+param instanceMemoryMB int = 2048
+
 @description('Additional app settings merged into base Function app settings.')
 param additionalAppSettings object = {}
 
@@ -38,20 +49,8 @@ param tags object = {}
 var functionAppName = toLower(take(replace('func-${baseName}-${environmentName}', '_', '-'), 60))
 var baseSettings = [
   {
-    name: 'FUNCTIONS_WORKER_RUNTIME'
-    value: 'python'
-  }
-  {
-    name: 'FUNCTIONS_EXTENSION_VERSION'
-    value: '~4'
-  }
-  {
-    name: 'AzureWebJobsStorage'
-    value: storageConnectionString
-  }
-  {
-    name: 'WEBSITE_RUN_FROM_PACKAGE'
-    value: '1'
+    name: 'AzureWebJobsStorage__accountName'
+    value: storageAccountName
   }
   {
     name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
@@ -99,8 +98,26 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: planId
     httpsOnly: true
     clientAffinityEnabled: false
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storageBlobEndpoint}${deploymentContainerName}'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: maxInstanceCount
+        instanceMemoryMB: instanceMemoryMB
+      }
+      runtime: {
+        name: 'python'
+        version: '3.12'
+      }
+    }
     siteConfig: {
-      linuxFxVersion: 'Python|3.12'
       minTlsVersion: '1.2'
       ftpsState: 'Disabled'
       appSettings: concat(baseSettings, customSettings)
